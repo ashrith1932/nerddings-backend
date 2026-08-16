@@ -6,6 +6,7 @@ const envSchema = z.object({
   DATABASE_URL: z.string().optional(),
   AUTH_SECRET: z.string().min(16).default("local-development-secret-change-me"),
   FRONTEND_ORIGIN: z.string().default("http://localhost:3000"),
+  BACKEND_ORIGIN: z.string().default("http://localhost:4000"),
   SUPABASE_URL: z.string().url().optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(20).optional(),
   STORAGE_BUCKET: z.string().default("nerdding-media"),

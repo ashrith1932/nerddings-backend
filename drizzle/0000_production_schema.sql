@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS users (
   location varchar(160),
   account_type varchar(20) NOT NULL DEFAULT 'user',
   interests text[] NOT NULL DEFAULT '{}',
+  onboarding_completed boolean NOT NULL DEFAULT false,
   trust_score integer NOT NULL DEFAULT 50,
   created_at timestamptz NOT NULL DEFAULT now()
 );
@@ -18,8 +19,13 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS agents (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name varchar(180) NOT NULL,
   slug varchar(100) NOT NULL UNIQUE, type varchar(80) NOT NULL,
-  verified boolean NOT NULL DEFAULT false, domain varchar(255), created_at timestamptz NOT NULL DEFAULT now()
+  verified boolean NOT NULL DEFAULT false, verification_status varchar(20) NOT NULL DEFAULT 'pending', verification_note text, reviewed_at timestamptz, domain varchar(255), created_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_completed boolean NOT NULL DEFAULT false;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS verification_status varchar(20) NOT NULL DEFAULT 'pending';
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS verification_note text;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS reviewed_at timestamptz;
 CREATE TABLE IF NOT EXISTS projects (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner_id uuid NOT NULL REFERENCES users(id), agent_id uuid REFERENCES agents(id),
   name varchar(180) NOT NULL, slug varchar(100) NOT NULL UNIQUE, description text NOT NULL, stage varchar(40) NOT NULL,

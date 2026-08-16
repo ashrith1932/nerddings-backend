@@ -11,6 +11,7 @@ export const users = pgTable("users", {
   location: varchar("location", { length: 160 }),
   accountType: varchar("account_type", { length: 20 }).notNull().default("user"),
   interests: text("interests").array().notNull().default([]),
+  onboardingCompleted: boolean("onboarding_completed").notNull().default(false),
   trustScore: integer("trust_score").notNull().default(50),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
@@ -21,6 +22,9 @@ export const agents = pgTable("agents", {
   slug: varchar("slug", { length: 100 }).notNull().unique(),
   type: varchar("type", { length: 80 }).notNull(),
   verified: boolean("verified").notNull().default(false),
+  verificationStatus: varchar("verification_status", { length: 20 }).notNull().default("pending"),
+  verificationNote: text("verification_note"),
+  reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
   domain: varchar("domain", { length: 255 }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });

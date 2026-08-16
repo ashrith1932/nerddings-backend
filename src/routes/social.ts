@@ -4,7 +4,7 @@ import { z } from "zod";
 import { requireAuth } from "../middleware/auth.js";
 import { feedPosts } from "../lib/store.js";
 import { db } from "../db/client.js";
-import { postComments, posts, postLikes, postSaves, postReposts, follows as followsTable } from "../db/schema.js";
+import { postComments, postMedia, posts, postLikes, postSaves, postReposts, follows as followsTable } from "../db/schema.js";
 import { and, eq } from "drizzle-orm";
 
 const actionState = new Map<string, { likes: Set<string>; saves: Set<string>; reposts: Set<string> }>();
@@ -27,6 +27,7 @@ socialRouter.post("/posts", requireAuth, async (req, res) => {
   const id = randomUUID();
   if (db) {
     const [created] = await db.insert(posts).values({ id, authorId: req.auth!.subjectId, body: parsed.data.body, proofOfWorkScore: parsed.data.media.length ? "0.7" : "0" }).returning();
+    if (parsed.data.media.length) await db.insert(postMedia).values(parsed.data.media.map((media, index) => ({ postId: created?.id ?? id, storagePath: media.path, publicUrl: media.publicUrl, mimeType: media.mimeType, sortOrder: index })));
     return res.status(201).json({ data: { id: created?.id ?? id, body: parsed.data.body, media: parsed.data.media } });
   }
   feedPosts.unshift({ id, authorId: req.auth!.subjectId, text: parsed.data.body, topic: parsed.data.topic, createdAt: new Date().toISOString(), projectSlug: parsed.data.projectSlug, signals: { relevance: 0.7, freshness: 1, proofOfWork: parsed.data.media.length ? 0.7 : 0.25, meaningfulEngagement: 0, trust: 0.5, projectActivity: 0.4, relationship: 0.5, spamPenalty: 0 } });
