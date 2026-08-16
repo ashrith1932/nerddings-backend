@@ -1,8 +1,11 @@
 import { Router, type Request, type Response } from "express";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
+import { createServerClient } from "@supabase/ssr";
+
 import { env } from "../config/env.js";
 import { requireAuth } from "../middleware/auth.js";
+
 import {
   completeOnboarding,
   findOrCreateOAuthUser,
@@ -10,10 +13,6 @@ import {
   loginUser,
   registerUser,
 } from "../lib/auth-store.js";
-import {
-  createClient,
-  type SupportedStorage,
-} from "@supabase/supabase-js";
 
 const registerSchema = z.object({
   name: z.string().min(2).max(160),
@@ -27,6 +26,12 @@ const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
 });
+
+/*
+ * =========================================================
+ * APPLICATION JWT
+ * =========================================================
+ */
 
 function tokenFor(user: {
   id: string;
@@ -45,92 +50,128 @@ function tokenFor(user: {
 }
 
 /*
- * ---------------------------------------------------------
- * COOKIE HELPERS
- * ---------------------------------------------------------
+ * =========================================================
+ * COOKIE PARSER
+ * =========================================================
  */
 
-function parseCookies(req: Request): Record<string, string> {
+function getCookies(req: Request) {
   const header = req.headers.cookie;
 
   if (!header) {
-    return {};
+    return [];
   }
 
-  const cookies: Record<string, string> = {};
+  return header
+    .split(";")
+    .map((part) => {
+      const index = part.indexOf("=");
 
-  for (const part of header.split(";")) {
-    const index = part.indexOf("=");
+      if (index === -1) {
+        return null;
+      }
 
-    if (index === -1) {
-      continue;
-    }
+      const name = part.slice(0, index).trim();
+      const value = part.slice(index + 1).trim();
 
-    const key = part.slice(0, index).trim();
-    const value = part.slice(index + 1).trim();
-
-    try {
-      cookies[key] = decodeURIComponent(value);
-    } catch {
-      cookies[key] = value;
-    }
-  }
-
-  return cookies;
-}
-
-function setCookie(
-  res: Response,
-  name: string,
-  value: string,
-) {
-  res.append(
-    "Set-Cookie",
-    [
-      `${name}=${encodeURIComponent(value)}`,
-      "Path=/",
-      "HttpOnly",
-      "Secure",
-      "SameSite=None",
-      "Max-Age=600",
-    ].join("; "),
-  );
-}
-
-function clearCookie(
-  res: Response,
-  name: string,
-) {
-  res.append(
-    "Set-Cookie",
-    [
-      `${name}=`,
-      "Path=/",
-      "HttpOnly",
-      "Secure",
-      "SameSite=None",
-      "Max-Age=0",
-    ].join("; "),
-  );
+      try {
+        return {
+          name,
+          value: decodeURIComponent(value),
+        };
+      } catch {
+        return {
+          name,
+          value,
+        };
+      }
+    })
+    .filter(
+      (
+        cookie,
+      ): cookie is {
+        name: string;
+        value: string;
+      } => cookie !== null,
+    );
 }
 
 /*
- * ---------------------------------------------------------
- * SUPABASE CLIENT
- * ---------------------------------------------------------
- *
- * We create a request-specific client.
- *
- * The important part is the custom storage adapter.
- * Supabase stores the PKCE verifier through setItem().
- *
- * We put that verifier into an HttpOnly cookie.
- *
- * When the browser returns to /oauth/callback,
- * the same cookie is read through getItem().
+ * =========================================================
+ * COOKIE SERIALIZER
+ * =========================================================
  */
 
-function createSupabaseClient(
+function serializeCookie(
+  name: string,
+  value: string,
+  options: Record<string, unknown> = {},
+) {
+  let cookie =
+    `${name}=${encodeURIComponent(value)}`;
+
+  const path =
+    typeof options.path === "string"
+      ? options.path
+      : "/";
+
+  cookie += `; Path=${path}`;
+
+  if (typeof options.maxAge === "number") {
+    cookie += `; Max-Age=${Math.floor(
+      options.maxAge,
+    )}`;
+  }
+
+  if (options.domain) {
+    cookie += `; Domain=${options.domain}`;
+  }
+
+  if (options.httpOnly !== false) {
+    cookie += "; HttpOnly";
+  }
+
+  if (options.secure !== false) {
+    cookie += "; Secure";
+  }
+
+  if (options.sameSite) {
+    const sameSite =
+      String(options.sameSite);
+
+    cookie +=
+      `; SameSite=${sameSite
+        .charAt(0)
+        .toUpperCase()}${sameSite.slice(1)}`;
+  } else {
+    cookie += "; SameSite=Lax";
+  }
+
+  if (options.expires instanceof Date) {
+    cookie +=
+      `; Expires=${options.expires.toUTCString()}`;
+  }
+
+  return cookie;
+}
+
+/*
+ * =========================================================
+ * SUPABASE SERVER CLIENT
+ * =========================================================
+ *
+ * IMPORTANT:
+ *
+ * This is a request-specific Supabase client.
+ *
+ * The PKCE verifier is stored in cookies during the
+ * OAuth-start request and read from those cookies during
+ * the OAuth callback.
+ *
+ * This is the important part that was missing before.
+ */
+
+function createSupabaseServerClient(
   req: Request,
   res: Response,
 ) {
@@ -141,51 +182,51 @@ function createSupabaseClient(
     return null;
   }
 
-  const cookies = parseCookies(req);
-
-  const storage: SupportedStorage = {
-    getItem(key) {
-      const value = cookies[key];
-
-      console.log(
-        `[OAuth] PKCE getItem: ${key} -> ${
-          value ? "FOUND" : "NOT FOUND"
-        }`,
-      );
-
-      return value ?? null;
-    },
-
-    setItem(key, value) {
-      console.log(
-        `[OAuth] PKCE setItem: ${key}`,
-      );
-
-      setCookie(res, key, value);
-    },
-
-    removeItem(key) {
-      console.log(
-        `[OAuth] PKCE removeItem: ${key}`,
-      );
-
-      clearCookie(res, key);
-    },
-  };
-
-  return createClient(
+  const supabase = createServerClient(
     env.SUPABASE_URL,
     env.SUPABASE_SERVICE_ROLE_KEY,
     {
-      auth: {
-        flowType: "pkce",
-        persistSession: false,
-        autoRefreshToken: false,
-        detectSessionInUrl: false,
-        storage,
+      cookies: {
+        getAll() {
+          return getCookies(req);
+        },
+
+        setAll(
+          cookiesToSet,
+          headers,
+        ) {
+          for (const {
+            name,
+            value,
+            options,
+          } of cookiesToSet) {
+            res.append(
+              "Set-Cookie",
+              serializeCookie(
+                name,
+                value,
+                options,
+              ),
+            );
+          }
+
+          /*
+           * Supabase SSR can provide cache-control
+           * headers when cookies are changed.
+           */
+          if (headers) {
+            for (const [key, value] of Object.entries(
+              headers,
+            )) {
+              res.setHeader(key, value);
+            }
+          }
+        },
       },
     },
   );
+
+  return supabase;
 }
 
 export const authRouter = Router();
@@ -195,10 +236,11 @@ export const authRouter = Router();
  * OAUTH CALLBACK
  * =========================================================
  *
- * IMPORTANT:
- * This MUST appear before /oauth/:provider.
+ * THIS ROUTE MUST COME BEFORE:
  *
- * Otherwise Express interprets "callback" as the provider.
+ * /oauth/:provider
+ *
+ * Otherwise "callback" gets interpreted as a provider.
  */
 
 authRouter.get(
@@ -216,7 +258,7 @@ authRouter.get(
 
     if (!code) {
       console.error(
-        "[OAuth] No authorization code received.",
+        "[OAuth] Authorization code missing.",
       );
 
       return res.redirect(
@@ -225,11 +267,14 @@ authRouter.get(
     }
 
     const supabase =
-      createSupabaseClient(req, res);
+      createSupabaseServerClient(
+        req,
+        res,
+      );
 
     if (!supabase) {
       console.error(
-        "[OAuth] Supabase is not configured.",
+        "[OAuth] Supabase environment variables are missing.",
       );
 
       return res.redirect(
@@ -242,6 +287,10 @@ authRouter.get(
         "[OAuth] Exchanging authorization code...",
       );
 
+      /*
+       * Supabase reads the PKCE verifier from
+       * the cookies supplied by getAll().
+       */
       const {
         data,
         error,
@@ -261,9 +310,11 @@ authRouter.get(
         );
       }
 
-      if (!data.user?.email) {
+      const oauthUser = data.user;
+
+      if (!oauthUser?.email) {
         console.error(
-          "[OAuth] Supabase returned no user email.",
+          "[OAuth] Supabase returned no email.",
         );
 
         return res.redirect(
@@ -273,29 +324,39 @@ authRouter.get(
 
       console.log(
         "[OAuth] Supabase authentication successful:",
-        data.user.email,
+        oauthUser.email,
       );
 
+      /*
+       * Create/find the corresponding Nerddings user.
+       */
       const user =
         await findOrCreateOAuthUser({
-          email: data.user.email,
+          email: oauthUser.email,
+
           name:
-            data.user.user_metadata
+            oauthUser.user_metadata
               ?.full_name ??
-            data.user.user_metadata
-              ?.name,
+            oauthUser.user_metadata
+              ?.name ??
+            null,
 
           username:
-            data.user.user_metadata
+            oauthUser.user_metadata
               ?.user_name ??
-            data.user.user_metadata
-              ?.preferred_username,
+            oauthUser.user_metadata
+              ?.preferred_username ??
+            null,
 
           avatarUrl:
-            data.user.user_metadata
-              ?.avatar_url,
+            oauthUser.user_metadata
+              ?.avatar_url ??
+            null,
         });
 
+      /*
+       * Your application uses its own JWT.
+       */
       const token = tokenFor(user);
 
       console.log(
@@ -303,6 +364,9 @@ authRouter.get(
         user.username,
       );
 
+      /*
+       * Send the user back to your frontend.
+       */
       return res.redirect(
         `${env.FRONTEND_ORIGIN}/auth/callback?token=${encodeURIComponent(
           token,
@@ -335,23 +399,31 @@ authRouter.get(
 authRouter.get(
   "/oauth/:provider",
   async (req, res) => {
-    const provider = req.params.provider;
+    const provider =
+      req.params.provider;
 
+    /*
+     * Only Google and GitHub are allowed.
+     */
     if (
       provider !== "github" &&
       provider !== "google"
     ) {
       return res.status(404).json({
-        error: "Unsupported OAuth provider.",
+        error:
+          "Unsupported OAuth provider.",
       });
     }
 
     const supabase =
-      createSupabaseClient(req, res);
+      createSupabaseServerClient(
+        req,
+        res,
+      );
 
     if (!supabase) {
       console.error(
-        "[OAuth] Supabase environment variables missing.",
+        "[OAuth] Supabase is not configured.",
       );
 
       return res.status(500).json({
@@ -371,7 +443,9 @@ authRouter.get(
       } =
         await supabase.auth.signInWithOAuth({
           provider:
-            provider as "github" | "google",
+            provider as
+              | "github"
+              | "google",
 
           options: {
             redirectTo:
@@ -396,7 +470,7 @@ authRouter.get(
 
       if (!data.url) {
         console.error(
-          "[OAuth] Supabase returned no OAuth URL.",
+          "[OAuth] Supabase did not return an OAuth URL.",
         );
 
         return res.status(502).json({
@@ -409,6 +483,15 @@ authRouter.get(
         `[OAuth] Redirecting to ${provider}...`,
       );
 
+      /*
+       * IMPORTANT:
+       *
+       * Supabase's PKCE verifier cookie is added
+       * to this response by setAll().
+       *
+       * The browser stores that cookie and sends
+       * it back when /oauth/callback is reached.
+       */
       return res.redirect(data.url);
     } catch (error) {
       console.error(
@@ -434,7 +517,9 @@ authRouter.post(
   "/register",
   async (req, res) => {
     const parsed =
-      registerSchema.safeParse(req.body);
+      registerSchema.safeParse(
+        req.body,
+      );
 
     if (!parsed.success) {
       return res.status(400).json({
@@ -447,7 +532,9 @@ authRouter.post(
 
     try {
       const user =
-        await registerUser(parsed.data);
+        await registerUser(
+          parsed.data,
+        );
 
       return res.status(201).json({
         data: {
@@ -489,12 +576,14 @@ authRouter.post(
   "/login",
   async (req, res) => {
     const parsed =
-      loginSchema.safeParse(req.body);
+      loginSchema.safeParse(
+        req.body,
+      );
 
     if (!parsed.success) {
       return res.status(400).json({
         error:
-          "Enter your email or password.",
+          "Enter your email and password.",
       });
     }
 
@@ -568,7 +657,10 @@ authRouter.post(
           ),
 
         accountType:
-          z.enum(["user", "agent"]),
+          z.enum([
+            "user",
+            "agent",
+          ]),
 
         interests: z
           .array(
@@ -590,12 +682,14 @@ authRouter.post(
     }
 
     try {
+      const user =
+        await completeOnboarding(
+          req.auth!.subjectId,
+          parsed.data,
+        );
+
       return res.json({
-        data:
-          await completeOnboarding(
-            req.auth!.subjectId,
-            parsed.data,
-          ),
+        data: user,
       });
     } catch (error) {
       if (
@@ -626,6 +720,7 @@ authRouter.post(
 authRouter.post(
   "/logout",
   requireAuth,
-  (_req, res) =>
-    res.status(204).send(),
+  (_req, res) => {
+    return res.status(204).send();
+  },
 );
