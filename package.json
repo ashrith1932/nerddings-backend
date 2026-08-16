@@ -19,6 +19,7 @@
     "@types/jsonwebtoken": "^9.0.6",
     "cors": "^2.8.5",
     "drizzle-orm": "^0.45.2",
+    "ws": "^8.18.3",
     "express": "^4.19.2",
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
@@ -30,6 +31,7 @@
     "@types/pg": "^8.11.6",
     "drizzle-kit": "^0.31.10",
     "tsx": "^4.16.2",
-    "typescript": "^5.5.4"
+    "typescript": "^5.5.4",
+    "@types/ws": "^8.5.13"
   }
 }
