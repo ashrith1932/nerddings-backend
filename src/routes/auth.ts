@@ -107,8 +107,7 @@ function serializeCookie(
   value: string,
   options: Record<string, unknown> = {},
 ) {
-  let cookie =
-    `${name}=${encodeURIComponent(value)}`;
+  let cookie = `${name}=${encodeURIComponent(value)}`;
 
   const path =
     typeof options.path === "string"
@@ -118,9 +117,7 @@ function serializeCookie(
   cookie += `; Path=${path}`;
 
   if (typeof options.maxAge === "number") {
-    cookie += `; Max-Age=${Math.floor(
-      options.maxAge,
-    )}`;
+    cookie += `; Max-Age=${Math.floor(options.maxAge)}`;
   }
 
   if (options.domain) {
@@ -136,20 +133,17 @@ function serializeCookie(
   }
 
   if (options.sameSite) {
-    const sameSite =
-      String(options.sameSite);
+    const sameSite = String(options.sameSite);
 
-    cookie +=
-      `; SameSite=${sameSite
-        .charAt(0)
-        .toUpperCase()}${sameSite.slice(1)}`;
+    cookie += `; SameSite=${sameSite
+      .charAt(0)
+      .toUpperCase()}${sameSite.slice(1)}`;
   } else {
     cookie += "; SameSite=Lax";
   }
 
   if (options.expires instanceof Date) {
-    cookie +=
-      `; Expires=${options.expires.toUTCString()}`;
+    cookie += `; Expires=${options.expires.toUTCString()}`;
   }
 
   return cookie;
@@ -162,14 +156,26 @@ function serializeCookie(
  *
  * IMPORTANT:
  *
- * This is a request-specific Supabase client.
+ * Supabase's PKCE verifier cookie must be created BEFORE
+ * Express sends the OAuth redirect response.
  *
- * The PKCE verifier is stored in cookies during the
- * OAuth-start request and read from those cookies during
- * the OAuth callback.
+ * Therefore we buffer Set-Cookie headers in memory and
+ * explicitly flush them before calling res.redirect().
  *
- * This is the important part that was missing before.
+ * This prevents:
+ *
+ * ERR_HTTP_HEADERS_SENT
+ *
+ * which was crashing the Render service.
  */
+
+type PendingCookie = {
+  name: string;
+  value: string;
+  options: Record<string, unknown>;
+};
+
+type PendingHeaders = Record<string, string | string[]>;
 
 function createSupabaseServerClient(
   req: Request,
@@ -181,6 +187,9 @@ function createSupabaseServerClient(
   ) {
     return null;
   }
+
+  const pendingCookies: PendingCookie[] = [];
+  const pendingHeaders: PendingHeaders = {};
 
   const supabase = createServerClient(
     env.SUPABASE_URL,
@@ -195,30 +204,30 @@ function createSupabaseServerClient(
           cookiesToSet,
           headers,
         ) {
+          /*
+           * NEVER write directly to Express here.
+           *
+           * signInWithOAuth() can cause this callback to
+           * execute while the OAuth response is being prepared.
+           *
+           * Buffer everything instead.
+           */
+
           for (const {
             name,
             value,
             options,
           } of cookiesToSet) {
-            res.append(
-              "Set-Cookie",
-              serializeCookie(
-                name,
-                value,
-                options,
-              ),
-            );
+            pendingCookies.push({
+              name,
+              value,
+              options: options as Record<string, unknown>,
+            });
           }
 
-          /*
-           * Supabase SSR can provide cache-control
-           * headers when cookies are changed.
-           */
           if (headers) {
-            for (const [key, value] of Object.entries(
-              headers,
-            )) {
-              res.setHeader(key, value);
+            for (const [key, value] of Object.entries(headers)) {
+              pendingHeaders[key] = value;
             }
           }
         },
@@ -226,7 +235,40 @@ function createSupabaseServerClient(
     },
   );
 
-  return supabase;
+  /*
+   * Flush buffered cookies/headers to Express.
+   *
+   * This MUST be called before res.redirect().
+   */
+  function flushResponseHeaders() {
+    if (res.headersSent) {
+      console.warn(
+        "[OAuth] Response headers already sent. Skipping cookie flush.",
+      );
+
+      return;
+    }
+
+    for (const cookie of pendingCookies) {
+      res.append(
+        "Set-Cookie",
+        serializeCookie(
+          cookie.name,
+          cookie.value,
+          cookie.options,
+        ),
+      );
+    }
+
+    for (const [key, value] of Object.entries(pendingHeaders)) {
+      res.setHeader(key, value);
+    }
+  }
+
+  return {
+    supabase,
+    flushResponseHeaders,
+  };
 }
 
 export const authRouter = Router();
@@ -236,11 +278,9 @@ export const authRouter = Router();
  * OAUTH CALLBACK
  * =========================================================
  *
- * THIS ROUTE MUST COME BEFORE:
+ * MUST COME BEFORE:
  *
  * /oauth/:provider
- *
- * Otherwise "callback" gets interpreted as a provider.
  */
 
 authRouter.get(
@@ -266,13 +306,13 @@ authRouter.get(
       );
     }
 
-    const supabase =
+    const client =
       createSupabaseServerClient(
         req,
         res,
       );
 
-    if (!supabase) {
+    if (!client) {
       console.error(
         "[OAuth] Supabase environment variables are missing.",
       );
@@ -282,15 +322,16 @@ authRouter.get(
       );
     }
 
+    const {
+      supabase,
+      flushResponseHeaders,
+    } = client;
+
     try {
       console.log(
         "[OAuth] Exchanging authorization code...",
       );
 
-      /*
-       * Supabase reads the PKCE verifier from
-       * the cookies supplied by getAll().
-       */
       const {
         data,
         error,
@@ -328,7 +369,7 @@ authRouter.get(
       );
 
       /*
-       * Create/find the corresponding Nerddings user.
+       * Create/find corresponding Nerddings user.
        */
       const user =
         await findOrCreateOAuthUser({
@@ -355,7 +396,7 @@ authRouter.get(
         });
 
       /*
-       * Your application uses its own JWT.
+       * Create application JWT.
        */
       const token = tokenFor(user);
 
@@ -365,7 +406,19 @@ authRouter.get(
       );
 
       /*
-       * Send the user back to your frontend.
+       * The Supabase exchange may have generated
+       * updated authentication cookies.
+       *
+       * Write them BEFORE redirecting.
+       */
+      flushResponseHeaders();
+
+      /*
+       * Finally redirect to frontend.
+       *
+       * IMPORTANT:
+       * Nothing below this point should attempt to modify
+       * response headers.
        */
       return res.redirect(
         `${env.FRONTEND_ORIGIN}/auth/callback?token=${encodeURIComponent(
@@ -378,9 +431,13 @@ authRouter.get(
         error,
       );
 
-      return res.redirect(
-        `${env.FRONTEND_ORIGIN}/login?error=oauth_failed`,
-      );
+      if (!res.headersSent) {
+        return res.redirect(
+          `${env.FRONTEND_ORIGIN}/login?error=oauth_failed`,
+        );
+      }
+
+      return;
     }
   },
 );
@@ -415,13 +472,13 @@ authRouter.get(
       });
     }
 
-    const supabase =
+    const client =
       createSupabaseServerClient(
         req,
         res,
       );
 
-    if (!supabase) {
+    if (!client) {
       console.error(
         "[OAuth] Supabase is not configured.",
       );
@@ -431,6 +488,11 @@ authRouter.get(
           "Supabase OAuth is not configured.",
       });
     }
+
+    const {
+      supabase,
+      flushResponseHeaders,
+    } = client;
 
     try {
       console.log(
@@ -484,13 +546,17 @@ authRouter.get(
       );
 
       /*
-       * IMPORTANT:
+       * CRITICAL FIX
        *
-       * Supabase's PKCE verifier cookie is added
-       * to this response by setAll().
+       * signInWithOAuth() creates the PKCE verifier
+       * cookie.
        *
-       * The browser stores that cookie and sends
-       * it back when /oauth/callback is reached.
+       * Flush that cookie BEFORE redirecting.
+       */
+      flushResponseHeaders();
+
+      /*
+       * Now it is safe to send the redirect.
        */
       return res.redirect(data.url);
     } catch (error) {
@@ -499,10 +565,14 @@ authRouter.get(
         error,
       );
 
-      return res.status(500).json({
-        error:
-          "Unable to start OAuth sign-in.",
-      });
+      if (!res.headersSent) {
+        return res.status(500).json({
+          error:
+            "Unable to start OAuth sign-in.",
+        });
+      }
+
+      return;
     }
   },
 );
@@ -708,19 +778,5 @@ authRouter.post(
           "Unable to complete onboarding.",
       });
     }
-  },
-);
-
-/*
- * =========================================================
- * LOGOUT
- * =========================================================
- */
-
-authRouter.post(
-  "/logout",
-  requireAuth,
-  (_req, res) => {
-    return res.status(204).send();
   },
 );
