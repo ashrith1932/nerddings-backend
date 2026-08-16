@@ -1,11 +1,7 @@
 import type { Server as HttpServer } from "node:http";
+import { createRequire } from "node:module";
 import jwt from "jsonwebtoken";
-import WebSocket, {
-  WebSocketServer,
-  type RawData,
-} from "ws";
 
-import type { WebSocket as WebSocketType } from "ws";
 import { env } from "../config/env.js";
 import { db } from "../db/client.js";
 import {
@@ -14,8 +10,58 @@ import {
   messageRequests,
   messages,
 } from "../db/schema.js";
-import { and, eq, or } from "drizzle-orm";
+import {
+  and,
+  eq,
+  or,
+} from "drizzle-orm";
 import { randomUUID } from "node:crypto";
+
+const require = createRequire(import.meta.url);
+
+type RawData =
+  | Buffer
+  | ArrayBuffer
+  | Buffer[];
+
+type WebSocketLike = {
+  readonly readyState: number;
+  send(data: string): void;
+  close(code?: number, reason?: string): void;
+  on(
+    event: "message",
+    listener: (raw: RawData) => void | Promise<void>,
+  ): void;
+  on(
+    event: "close",
+    listener: () => void,
+  ): void;
+  on(
+    event: "error",
+    listener: (error: Error) => void,
+  ): void;
+};
+
+type WebSocketServerLike = {
+  on(
+    event: "connection",
+    listener: (socket: WebSocketLike) => void,
+  ): void;
+};
+
+const {
+  WebSocketServer,
+  WebSocket,
+} = require("ws") as {
+  WebSocketServer: new (options: {
+    server: HttpServer;
+    path?: string;
+  }) => WebSocketServerLike;
+  WebSocket: {
+    OPEN: number;
+  };
+};
+
 
 type AuthPayload = {
   sub?: string;
@@ -41,17 +87,17 @@ type ClientMessage =
       type: "ping";
     };
 
-type AuthenticatedSocket = WebSocketType & {
+type AuthenticatedSocket = WebSocketLike & {
   __nerddingUserId?: string;
 };
 
 const clients = new Map<
   string,
-  Set<WebSocketType>
+  Set<WebSocketLike>
 >();
 
 function send(
-  socket: WebSocketType,
+  socket: WebSocketLike,
   payload: unknown,
 ) {
   if (
@@ -66,14 +112,14 @@ function send(
 
 function addClient(
   userId: string,
-  socket: WebSocketType,
+  socket: WebSocketLike,
 ) {
   let sockets =
     clients.get(userId);
 
   if (!sockets) {
     sockets =
-      new Set<WebSocketType>();
+      new Set<WebSocketLike>();
 
     clients.set(
       userId,
@@ -86,7 +132,7 @@ function addClient(
 
 function removeClient(
   userId: string,
-  socket: WebSocketType,
+  socket: WebSocketLike,
 ) {
   const sockets =
     clients.get(userId);
@@ -313,7 +359,7 @@ export function attachRealtimeServer(
   wss.on(
     "connection",
     (
-      socket: WebSocketType,
+      socket: WebSocketLike,
     ) => {
       let authenticatedUserId:
         | string
