@@ -10,7 +10,10 @@ import {
   loginUser,
   registerUser,
 } from "../lib/auth-store.js";
-import { createClient, type SupportedStorage } from "@supabase/supabase-js";
+import {
+  createClient,
+  type SupportedStorage,
+} from "@supabase/supabase-js";
 
 const registerSchema = z.object({
   name: z.string().min(2).max(160),
@@ -25,7 +28,10 @@ const loginSchema = z.object({
   password: z.string().min(1),
 });
 
-function tokenFor(user: { id: string; accountType: "user" | "agent" }) {
+function tokenFor(user: {
+  id: string;
+  accountType: "user" | "agent";
+}) {
   return jwt.sign(
     {
       accountType: user.accountType,
@@ -40,14 +46,8 @@ function tokenFor(user: { id: string; accountType: "user" | "agent" }) {
 
 /*
  * ---------------------------------------------------------
- * Cookie helpers for Supabase PKCE
+ * COOKIE HELPERS
  * ---------------------------------------------------------
- *
- * Supabase creates a PKCE code verifier when OAuth starts.
- * Because the OAuth callback happens in a new HTTP request,
- * the verifier must survive between the two requests.
- *
- * We store it in an HttpOnly cookie.
  */
 
 function parseCookies(req: Request): Record<string, string> {
@@ -60,14 +60,14 @@ function parseCookies(req: Request): Record<string, string> {
   const cookies: Record<string, string> = {};
 
   for (const part of header.split(";")) {
-    const separatorIndex = part.indexOf("=");
+    const index = part.indexOf("=");
 
-    if (separatorIndex === -1) {
+    if (index === -1) {
       continue;
     }
 
-    const key = part.slice(0, separatorIndex).trim();
-    const value = part.slice(separatorIndex + 1).trim();
+    const key = part.slice(0, index).trim();
+    const value = part.slice(index + 1).trim();
 
     try {
       cookies[key] = decodeURIComponent(value);
@@ -83,60 +83,92 @@ function setCookie(
   res: Response,
   name: string,
   value: string,
-  maxAgeSeconds = 600,
 ) {
-  const cookie = [
-    `${name}=${encodeURIComponent(value)}`,
-    "Path=/api/v1/auth",
-    "HttpOnly",
-    "Secure",
-    "SameSite=Lax",
-    `Max-Age=${maxAgeSeconds}`,
-  ].join("; ");
-
-  res.append("Set-Cookie", cookie);
+  res.append(
+    "Set-Cookie",
+    [
+      `${name}=${encodeURIComponent(value)}`,
+      "Path=/",
+      "HttpOnly",
+      "Secure",
+      "SameSite=None",
+      "Max-Age=600",
+    ].join("; "),
+  );
 }
 
-function clearCookie(res: Response, name: string) {
-  const cookie = [
-    `${name}=`,
-    "Path=/api/v1/auth",
-    "HttpOnly",
-    "Secure",
-    "SameSite=Lax",
-    "Max-Age=0",
-  ].join("; ");
-
-  res.append("Set-Cookie", cookie);
+function clearCookie(
+  res: Response,
+  name: string,
+) {
+  res.append(
+    "Set-Cookie",
+    [
+      `${name}=`,
+      "Path=/",
+      "HttpOnly",
+      "Secure",
+      "SameSite=None",
+      "Max-Age=0",
+    ].join("; "),
+  );
 }
 
 /*
- * Creates a Supabase client for THIS request.
+ * ---------------------------------------------------------
+ * SUPABASE CLIENT
+ * ---------------------------------------------------------
  *
- * Important:
- * We do not keep one Supabase client globally because
- * the PKCE verifier belongs to a particular browser session.
+ * We create a request-specific client.
+ *
+ * The important part is the custom storage adapter.
+ * Supabase stores the PKCE verifier through setItem().
+ *
+ * We put that verifier into an HttpOnly cookie.
+ *
+ * When the browser returns to /oauth/callback,
+ * the same cookie is read through getItem().
  */
-function createSupabaseClient(req: Request, res: Response) {
-  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
+
+function createSupabaseClient(
+  req: Request,
+  res: Response,
+) {
+  if (
+    !env.SUPABASE_URL ||
+    !env.SUPABASE_SERVICE_ROLE_KEY
+  ) {
     return null;
   }
 
-  const incomingCookies = parseCookies(req);
+  const cookies = parseCookies(req);
 
   const storage: SupportedStorage = {
-    getItem: (key) => {
-      return incomingCookies[key] ?? null;
+    getItem(key) {
+      const value = cookies[key];
+
+      console.log(
+        `[OAuth] PKCE getItem: ${key} -> ${
+          value ? "FOUND" : "NOT FOUND"
+        }`,
+      );
+
+      return value ?? null;
     },
 
-    setItem: (key, value) => {
-      /*
-       * Supabase uses this to store the PKCE verifier.
-       */
+    setItem(key, value) {
+      console.log(
+        `[OAuth] PKCE setItem: ${key}`,
+      );
+
       setCookie(res, key, value);
     },
 
-    removeItem: (key) => {
+    removeItem(key) {
+      console.log(
+        `[OAuth] PKCE removeItem: ${key}`,
+      );
+
       clearCookie(res, key);
     },
   };
@@ -159,310 +191,441 @@ function createSupabaseClient(req: Request, res: Response) {
 export const authRouter = Router();
 
 /*
- * ---------------------------------------------------------
- * OAuth START
- * ---------------------------------------------------------
+ * =========================================================
+ * OAUTH CALLBACK
+ * =========================================================
  *
- * Examples:
+ * IMPORTANT:
+ * This MUST appear before /oauth/:provider.
  *
- * GET /api/v1/auth/oauth/github
- * GET /api/v1/auth/oauth/google
+ * Otherwise Express interprets "callback" as the provider.
  */
 
-authRouter.get("/oauth/callback", async (req, res) => {
-  const code =
-    typeof req.query.code === "string"
-      ? req.query.code
-      : "";
-
-  if (!code) {
-    return res.redirect(
-      `${env.FRONTEND_ORIGIN}/login?error=oauth_code_missing`,
+authRouter.get(
+  "/oauth/callback",
+  async (req, res) => {
+    console.log(
+      "[OAuth] Callback received:",
+      req.originalUrl,
     );
-  }
 
-  const supabase = createSupabaseClient(req, res);
-
-  if (!supabase) {
-    return res.redirect(
-      `${env.FRONTEND_ORIGIN}/login?error=oauth_not_configured`,
-    );
-  }
-
-  try {
-    /*
-     * The Supabase client reads the PKCE verifier from
-     * the HttpOnly cookie created during OAuth start.
-     */
-    const { data, error } =
-      await supabase.auth.exchangeCodeForSession(code);
-
-    if (error) {
-      console.error("OAuth code exchange error:", error);
-
-      return res.redirect(
-        `${env.FRONTEND_ORIGIN}/login?error=oauth_exchange_failed`,
-      );
-    }
-
-    if (!data.user?.email) {
-      return res.redirect(
-        `${env.FRONTEND_ORIGIN}/login?error=oauth_user_missing`,
-      );
-    }
-
-    /*
-     * Create/find the corresponding Nerddings user.
-     */
-    const user = await findOrCreateOAuthUser({
-      email: data.user.email,
-      name:
-        data.user.user_metadata?.full_name ??
-        data.user.user_metadata?.name,
-      username:
-        data.user.user_metadata?.user_name ??
-        data.user.user_metadata?.preferred_username,
-      avatarUrl:
-        data.user.user_metadata?.avatar_url,
-    });
-
-    /*
-     * Remove the temporary PKCE verifier cookie.
-     *
-     * Supabase calls removeItem() during the exchange,
-     * but clearing the cookie here as well is harmless and
-     * makes the intent explicit.
-     */
-    const cookies = parseCookies(req);
-
-    for (const key of Object.keys(cookies)) {
-      if (
-        key.includes("code-verifier") ||
-        key.includes("code_verifier")
-      ) {
-        clearCookie(res, key);
-      }
-    }
-
-    /*
-     * Your application continues using its own JWT.
-     */
-    const token = tokenFor(user);
-
-    return res.redirect(
-      `${env.FRONTEND_ORIGIN}/auth/callback?token=${encodeURIComponent(token)}`,
-    );
-  } catch (error) {
-    console.error("OAuth callback exception:", error);
-
-    return res.redirect(
-      `${env.FRONTEND_ORIGIN}/login?error=oauth_failed`,
-    );
-  }
-});
-
-
-authRouter.get("/oauth/:provider", async (req, res) => {
-  const provider = req.params.provider;
-
-  if (provider !== "google" && provider !== "github") {
-    return res.status(404).json({
-      error: "Unsupported OAuth provider.",
-    });
-  }
-
-  const supabase = createSupabaseClient(req, res);
-
-  if (!supabase) {
-    return res.status(500).json({
-      error: "Supabase OAuth is not configured.",
-    });
-  }
-
-  try {
-    const { data, error } = await supabase.auth.signInWithOAuth({
-      provider,
-      options: {
-        redirectTo:
-          `${env.BACKEND_ORIGIN.replace(/\/$/, "")}/api/v1/auth/oauth/callback`,
-      },
-    });
-
-    if (error || !data.url) {
-      console.error("OAuth start error:", error);
-
-      return res.status(502).json({
-        error: "Unable to start OAuth sign-in.",
-      });
-    }
-
-    return res.redirect(data.url);
-  } catch (error) {
-    console.error("OAuth start exception:", error);
-
-    return res.status(500).json({
-      error: "Unable to start OAuth sign-in.",
-    });
-  }
-});
-
-/*
-
-
-
-/*
- * ---------------------------------------------------------
- * NORMAL EMAIL/PASSWORD REGISTRATION
- * ---------------------------------------------------------
- */
-authRouter.post("/register", async (req, res) => {
-  const parsed = registerSchema.safeParse(req.body);
-
-  if (!parsed.success) {
-    return res.status(400).json({
-      error: "Please enter valid account details.",
-      details: parsed.error.flatten(),
-    });
-  }
-
-  try {
-    const user = await registerUser(parsed.data);
-
-    return res.status(201).json({
-      data: {
-        user,
-        token: tokenFor(user),
-      },
-    });
-  } catch (error) {
     const code =
-      error instanceof Error
-        ? error.message
-        : "REGISTER_FAILED";
+      typeof req.query.code === "string"
+        ? req.query.code
+        : "";
+
+    if (!code) {
+      console.error(
+        "[OAuth] No authorization code received.",
+      );
+
+      return res.redirect(
+        `${env.FRONTEND_ORIGIN}/login?error=oauth_code_missing`,
+      );
+    }
+
+    const supabase =
+      createSupabaseClient(req, res);
+
+    if (!supabase) {
+      console.error(
+        "[OAuth] Supabase is not configured.",
+      );
+
+      return res.redirect(
+        `${env.FRONTEND_ORIGIN}/login?error=oauth_not_configured`,
+      );
+    }
+
+    try {
+      console.log(
+        "[OAuth] Exchanging authorization code...",
+      );
+
+      const {
+        data,
+        error,
+      } =
+        await supabase.auth.exchangeCodeForSession(
+          code,
+        );
+
+      if (error) {
+        console.error(
+          "[OAuth] Code exchange failed:",
+          error,
+        );
+
+        return res.redirect(
+          `${env.FRONTEND_ORIGIN}/login?error=oauth_exchange_failed`,
+        );
+      }
+
+      if (!data.user?.email) {
+        console.error(
+          "[OAuth] Supabase returned no user email.",
+        );
+
+        return res.redirect(
+          `${env.FRONTEND_ORIGIN}/login?error=oauth_user_missing`,
+        );
+      }
+
+      console.log(
+        "[OAuth] Supabase authentication successful:",
+        data.user.email,
+      );
+
+      const user =
+        await findOrCreateOAuthUser({
+          email: data.user.email,
+          name:
+            data.user.user_metadata
+              ?.full_name ??
+            data.user.user_metadata
+              ?.name,
+
+          username:
+            data.user.user_metadata
+              ?.user_name ??
+            data.user.user_metadata
+              ?.preferred_username,
+
+          avatarUrl:
+            data.user.user_metadata
+              ?.avatar_url,
+        });
+
+      const token = tokenFor(user);
+
+      console.log(
+        "[OAuth] Nerddings user authenticated:",
+        user.username,
+      );
+
+      return res.redirect(
+        `${env.FRONTEND_ORIGIN}/auth/callback?token=${encodeURIComponent(
+          token,
+        )}`,
+      );
+    } catch (error) {
+      console.error(
+        "[OAuth] Callback exception:",
+        error,
+      );
+
+      return res.redirect(
+        `${env.FRONTEND_ORIGIN}/login?error=oauth_failed`,
+      );
+    }
+  },
+);
+
+/*
+ * =========================================================
+ * OAUTH START
+ * =========================================================
+ *
+ * Supports:
+ *
+ * /api/v1/auth/oauth/github
+ * /api/v1/auth/oauth/google
+ */
+
+authRouter.get(
+  "/oauth/:provider",
+  async (req, res) => {
+    const provider = req.params.provider;
 
     if (
-      code === "EMAIL_EXISTS" ||
-      code === "USERNAME_EXISTS"
+      provider !== "github" &&
+      provider !== "google"
     ) {
-      return res.status(409).json({
-        error: "That email or username is already in use.",
+      return res.status(404).json({
+        error: "Unsupported OAuth provider.",
       });
     }
 
-    return res.status(500).json({
-      error: "Unable to create account.",
-    });
-  }
-});
+    const supabase =
+      createSupabaseClient(req, res);
+
+    if (!supabase) {
+      console.error(
+        "[OAuth] Supabase environment variables missing.",
+      );
+
+      return res.status(500).json({
+        error:
+          "Supabase OAuth is not configured.",
+      });
+    }
+
+    try {
+      console.log(
+        `[OAuth] Starting ${provider} OAuth...`,
+      );
+
+      const {
+        data,
+        error,
+      } =
+        await supabase.auth.signInWithOAuth({
+          provider:
+            provider as "github" | "google",
+
+          options: {
+            redirectTo:
+              `${env.BACKEND_ORIGIN.replace(
+                /\/$/,
+                "",
+              )}/api/v1/auth/oauth/callback`,
+          },
+        });
+
+      if (error) {
+        console.error(
+          "[OAuth] Supabase OAuth start error:",
+          error,
+        );
+
+        return res.status(502).json({
+          error:
+            "Unable to start OAuth sign-in.",
+        });
+      }
+
+      if (!data.url) {
+        console.error(
+          "[OAuth] Supabase returned no OAuth URL.",
+        );
+
+        return res.status(502).json({
+          error:
+            "Unable to start OAuth sign-in.",
+        });
+      }
+
+      console.log(
+        `[OAuth] Redirecting to ${provider}...`,
+      );
+
+      return res.redirect(data.url);
+    } catch (error) {
+      console.error(
+        "[OAuth] OAuth start exception:",
+        error,
+      );
+
+      return res.status(500).json({
+        error:
+          "Unable to start OAuth sign-in.",
+      });
+    }
+  },
+);
 
 /*
- * ---------------------------------------------------------
- * NORMAL EMAIL/PASSWORD LOGIN
- * ---------------------------------------------------------
+ * =========================================================
+ * REGISTER
+ * =========================================================
  */
-authRouter.post("/login", async (req, res) => {
-  const parsed = loginSchema.safeParse(req.body);
 
-  if (!parsed.success) {
-    return res.status(400).json({
-      error: "Enter your email and password.",
-    });
-  }
+authRouter.post(
+  "/register",
+  async (req, res) => {
+    const parsed =
+      registerSchema.safeParse(req.body);
 
-  try {
-    const user = await loginUser(
-      parsed.data.email,
-      parsed.data.password,
-    );
+    if (!parsed.success) {
+      return res.status(400).json({
+        error:
+          "Please enter valid account details.",
+        details:
+          parsed.error.flatten(),
+      });
+    }
 
-    return res.json({
-      data: {
-        user,
-        token: tokenFor(user),
-      },
-    });
-  } catch {
-    return res.status(401).json({
-      error: "Email or password is incorrect.",
-    });
-  }
-});
+    try {
+      const user =
+        await registerUser(parsed.data);
+
+      return res.status(201).json({
+        data: {
+          user,
+          token: tokenFor(user),
+        },
+      });
+    } catch (error) {
+      const code =
+        error instanceof Error
+          ? error.message
+          : "REGISTER_FAILED";
+
+      if (
+        code === "EMAIL_EXISTS" ||
+        code === "USERNAME_EXISTS"
+      ) {
+        return res.status(409).json({
+          error:
+            "That email or username is already in use.",
+        });
+      }
+
+      return res.status(500).json({
+        error:
+          "Unable to create account.",
+      });
+    }
+  },
+);
 
 /*
- * ---------------------------------------------------------
+ * =========================================================
+ * LOGIN
+ * =========================================================
+ */
+
+authRouter.post(
+  "/login",
+  async (req, res) => {
+    const parsed =
+      loginSchema.safeParse(req.body);
+
+    if (!parsed.success) {
+      return res.status(400).json({
+        error:
+          "Enter your email or password.",
+      });
+    }
+
+    try {
+      const user =
+        await loginUser(
+          parsed.data.email,
+          parsed.data.password,
+        );
+
+      return res.json({
+        data: {
+          user,
+          token: tokenFor(user),
+        },
+      });
+    } catch {
+      return res.status(401).json({
+        error:
+          "Email or password is incorrect.",
+      });
+    }
+  },
+);
+
+/*
+ * =========================================================
  * CURRENT USER
- * ---------------------------------------------------------
+ * =========================================================
  */
-authRouter.get("/me", requireAuth, async (req, res) => {
-  const user = await getUser(req.auth!.subjectId);
 
-  if (!user) {
-    return res.status(404).json({
-      error: "Account not found.",
-    });
-  }
-
-  return res.json({
-    data: user,
-  });
-});
-
-/*
- * ---------------------------------------------------------
- * ONBOARDING
- * ---------------------------------------------------------
- */
-authRouter.post("/onboarding", requireAuth, async (req, res) => {
-  const parsed = z
-    .object({
-      name: z.string().min(2).max(160),
-      username: z
-        .string()
-        .regex(/^[a-zA-Z0-9_.-]{3,40}$/),
-      accountType: z.enum(["user", "agent"]),
-      interests: z
-        .array(z.string().min(1).max(60))
-        .max(12)
-        .default([]),
-    })
-    .safeParse(req.body);
-
-  if (!parsed.success) {
-    return res.status(400).json({
-      error: "Please complete all required onboarding details.",
-    });
-  }
-
-  try {
-    return res.json({
-      data: await completeOnboarding(
+authRouter.get(
+  "/me",
+  requireAuth,
+  async (req, res) => {
+    const user =
+      await getUser(
         req.auth!.subjectId,
-        parsed.data,
-      ),
-    });
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message === "USERNAME_EXISTS"
-    ) {
-      return res.status(409).json({
-        error: "That username is already in use.",
+      );
+
+    if (!user) {
+      return res.status(404).json({
+        error: "Account not found.",
       });
     }
 
-    return res.status(500).json({
-      error: "Unable to complete onboarding.",
+    return res.json({
+      data: user,
     });
-  }
-});
+  },
+);
 
 /*
- * ---------------------------------------------------------
- * LOGOUT
- * ---------------------------------------------------------
+ * =========================================================
+ * ONBOARDING
+ * =========================================================
  */
+
+authRouter.post(
+  "/onboarding",
+  requireAuth,
+  async (req, res) => {
+    const parsed = z
+      .object({
+        name: z.string().min(2).max(160),
+
+        username: z
+          .string()
+          .regex(
+            /^[a-zA-Z0-9_.-]{3,40}$/,
+          ),
+
+        accountType:
+          z.enum(["user", "agent"]),
+
+        interests: z
+          .array(
+            z
+              .string()
+              .min(1)
+              .max(60),
+          )
+          .max(12)
+          .default([]),
+      })
+      .safeParse(req.body);
+
+    if (!parsed.success) {
+      return res.status(400).json({
+        error:
+          "Please complete all required onboarding details.",
+      });
+    }
+
+    try {
+      return res.json({
+        data:
+          await completeOnboarding(
+            req.auth!.subjectId,
+            parsed.data,
+          ),
+      });
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message ===
+          "USERNAME_EXISTS"
+      ) {
+        return res.status(409).json({
+          error:
+            "That username is already in use.",
+        });
+      }
+
+      return res.status(500).json({
+        error:
+          "Unable to complete onboarding.",
+      });
+    }
+  },
+);
+
+/*
+ * =========================================================
+ * LOGOUT
+ * =========================================================
+ */
+
 authRouter.post(
   "/logout",
   requireAuth,
-  (_req, res) => res.status(204).send(),
+  (_req, res) =>
+    res.status(204).send(),
 );
