@@ -12,6 +12,8 @@ import { uploadsRouter } from "./routes/uploads.js";
 import { messagesRouter } from "./routes/messages.js";
 import { settingsRouter } from "./routes/settings.js";
 import { notificationsRouter } from "./routes/notifications.js";
+import { eventsRouter } from "./routes/events.js";
+import { nerddingsRouter } from "./routes/nerddings.js";
 
 export const app = express();
 app.use(helmet());
@@ -29,6 +31,8 @@ app.use("/api/v1/uploads", uploadsRouter);
 app.use("/api/v1/messages", messagesRouter);
 app.use("/api/v1/settings", settingsRouter);
 app.use("/api/v1/notifications", notificationsRouter);
+app.use("/api/v1/events", eventsRouter);
+app.use("/api/v1/nerddings", nerddingsRouter);
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);

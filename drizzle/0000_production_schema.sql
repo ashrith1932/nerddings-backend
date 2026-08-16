@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS users (
   bio text,
   location varchar(160),
   account_type varchar(20) NOT NULL DEFAULT 'user',
+  messaging_public_key text,
+  messaging_key_version integer NOT NULL DEFAULT 1,
   interests text[] NOT NULL DEFAULT '{}',
   onboarding_completed boolean NOT NULL DEFAULT false,
   trust_score integer NOT NULL DEFAULT 50,
@@ -23,6 +25,8 @@ CREATE TABLE IF NOT EXISTS agents (
 );
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_completed boolean NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS messaging_public_key text;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS messaging_key_version integer NOT NULL DEFAULT 1;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS verification_status varchar(20) NOT NULL DEFAULT 'pending';
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS verification_note text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS reviewed_at timestamptz;
@@ -51,9 +55,17 @@ CREATE TABLE IF NOT EXISTS post_reposts (post_id uuid NOT NULL REFERENCES posts(
 CREATE TABLE IF NOT EXISTS follows (follower_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE, following_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE, created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (follower_id, following_id));
 CREATE TABLE IF NOT EXISTS conversations (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS conversation_members (conversation_id uuid NOT NULL REFERENCES conversations(id) ON DELETE CASCADE, user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE, PRIMARY KEY (conversation_id, user_id));
-CREATE TABLE IF NOT EXISTS messages (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), conversation_id uuid NOT NULL REFERENCES conversations(id) ON DELETE CASCADE, sender_id uuid NOT NULL REFERENCES users(id), body text NOT NULL, read_at timestamptz, created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS messages (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), conversation_id uuid NOT NULL REFERENCES conversations(id) ON DELETE CASCADE, sender_id uuid NOT NULL REFERENCES users(id), body text NOT NULL DEFAULT '', ciphertext text, iv text, sender_key text, recipient_key text, encryption_version integer NOT NULL DEFAULT 1, read_at timestamptz, created_at timestamptz NOT NULL DEFAULT now());
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS ciphertext text;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS iv text;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS sender_key text;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS recipient_key text;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS encryption_version integer NOT NULL DEFAULT 1;
+CREATE TABLE IF NOT EXISTS message_requests (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), sender_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE, recipient_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE, status varchar(20) NOT NULL DEFAULT 'pending', created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS notifications (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), recipient_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE, actor_id uuid REFERENCES users(id), kind varchar(40) NOT NULL, entity_id text, text text NOT NULL, read_at timestamptz, created_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS user_settings (user_id uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, discoverable boolean NOT NULL DEFAULT true, email_notifications boolean NOT NULL DEFAULT true, push_notifications boolean NOT NULL DEFAULT true, allow_messages boolean NOT NULL DEFAULT true, updated_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS events (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), creator_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE, title varchar(180) NOT NULL, description text NOT NULL, event_type varchar(40) NOT NULL DEFAULT 'Community', starts_at timestamptz NOT NULL, location varchar(180) NOT NULL, url text, created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS event_rsvps (event_id uuid NOT NULL REFERENCES events(id) ON DELETE CASCADE, user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE, status varchar(20) NOT NULL DEFAULT 'interested', created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (event_id, user_id));
 CREATE TABLE IF NOT EXISTS fundraisings (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), agent_id uuid NOT NULL REFERENCES agents(id), startup_name varchar(180) NOT NULL,
   stage varchar(40) NOT NULL, industry varchar(80) NOT NULL, target_amount numeric(14,2) NOT NULL, raised_amount numeric(14,2) NOT NULL DEFAULT 0,
@@ -61,3 +73,5 @@ CREATE TABLE IF NOT EXISTS fundraisings (
 );
 CREATE INDEX IF NOT EXISTS posts_created_at_idx ON posts(created_at DESC);
 CREATE INDEX IF NOT EXISTS notifications_recipient_idx ON notifications(recipient_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS message_requests_recipient_idx ON message_requests(recipient_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS events_starts_at_idx ON events(starts_at ASC);

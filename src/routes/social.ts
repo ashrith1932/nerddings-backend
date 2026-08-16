@@ -4,7 +4,7 @@ import { z } from "zod";
 import { requireAuth } from "../middleware/auth.js";
 import { feedPosts } from "../lib/store.js";
 import { db } from "../db/client.js";
-import { postComments, postMedia, posts, postLikes, postSaves, postReposts, follows as followsTable } from "../db/schema.js";
+import { notifications, postComments, postMedia, posts, postLikes, postSaves, postReposts, follows as followsTable } from "../db/schema.js";
 import { and, eq } from "drizzle-orm";
 
 const actionState = new Map<string, { likes: Set<string>; saves: Set<string>; reposts: Set<string> }>();
@@ -20,6 +20,12 @@ function stateFor(postId: string) {
 }
 
 export const socialRouter = Router();
+
+async function notifyPostOwner(postId: string, actorId: string, kind: string, text: string) {
+  if (!db) return;
+  const [post] = await db.select({ authorId: posts.authorId }).from(posts).where(eq(posts.id, postId)).limit(1);
+  if (post && post.authorId !== actorId) await db.insert(notifications).values({ recipientId: post.authorId, actorId, kind, entityId: postId, text });
+}
 
 socialRouter.post("/posts", requireAuth, async (req, res) => {
   const parsed = z.object({ body: z.string().min(1).max(5000), topic: z.string().max(80).default("build"), projectSlug: z.string().max(100).optional(), media: z.array(z.object({ path: z.string(), mimeType: z.string(), publicUrl: z.string().url().optional() })).max(10).default([]) }).safeParse(req.body);
@@ -44,6 +50,7 @@ socialRouter.post("/posts/:postId/comments", requireAuth, async (req, res) => {
   const current = comments.get(postId) ?? [];
   current.push(item); comments.set(postId, current);
   if (db) await db.insert(postComments).values({ id: item.id, postId, authorId: req.auth!.subjectId, body: item.body });
+  await notifyPostOwner(postId, req.auth!.subjectId, "comment", "commented on your post");
   return res.status(201).json({ data: item });
 });
 
@@ -57,6 +64,7 @@ socialRouter.post("/posts/:postId/:action", requireAuth, async (req, res) => {
     const [existing] = await db.select().from(table).where(where).limit(1);
     if (existing) await db.delete(table).where(where);
     else await db.insert(table).values({ postId, userId: req.auth!.subjectId });
+    if (!existing && action !== "save") await notifyPostOwner(postId, req.auth!.subjectId, action, action === "like" ? "liked your post" : "nerdded your post");
     return res.json({ data: { action, active: !existing } });
   }
   const state = stateFor(postId);
@@ -73,6 +81,7 @@ socialRouter.post("/users/:userId/follow", requireAuth, async (req, res) => {
     const [existing] = await db.select().from(followsTable).where(where).limit(1);
     if (existing) await db.delete(followsTable).where(where);
     else await db.insert(followsTable).values({ followerId: req.auth!.subjectId, followingId: userId });
+    if (!existing && db) await db.insert(notifications).values({ recipientId: userId, actorId: req.auth!.subjectId, kind: "follow", entityId: userId, text: "started following you" });
     return res.json({ data: { active: !existing, followingId: userId } });
   }
   const set = following.get(req.auth!.subjectId) ?? new Set<string>();

@@ -7,6 +7,8 @@ export const users = pgTable("users", {
   email: varchar("email", { length: 320 }).notNull().unique(),
   passwordHash: text("password_hash"),
   avatarUrl: text("avatar_url"),
+  messagingPublicKey: text("messaging_public_key"),
+  messagingKeyVersion: integer("messaging_key_version").notNull().default(1),
   bio: text("bio"),
   location: varchar("location", { length: 160 }),
   accountType: varchar("account_type", { length: 20 }).notNull().default("user"),
@@ -111,8 +113,22 @@ export const messages = pgTable("messages", {
   conversationId: uuid("conversation_id").references(() => conversations.id, { onDelete: "cascade" }).notNull(),
   senderId: uuid("sender_id").references(() => users.id).notNull(),
   body: text("body").notNull(),
+  ciphertext: text("ciphertext"),
+  iv: text("iv"),
+  senderKey: text("sender_key"),
+  recipientKey: text("recipient_key"),
+  encryptionVersion: integer("encryption_version").notNull().default(1),
   readAt: timestamp("read_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const messageRequests = pgTable("message_requests", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  senderId: uuid("sender_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+  recipientId: uuid("recipient_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("pending"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
 export const notifications = pgTable("notifications", {
@@ -134,6 +150,25 @@ export const userSettings = pgTable("user_settings", {
   allowMessages: boolean("allow_messages").notNull().default(true),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+export const events = pgTable("events", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  creatorId: uuid("creator_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+  title: varchar("title", { length: 180 }).notNull(),
+  description: text("description").notNull(),
+  eventType: varchar("event_type", { length: 40 }).notNull().default("Community"),
+  startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+  location: varchar("location", { length: 180 }).notNull(),
+  url: text("url"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const eventRsvps = pgTable("event_rsvps", {
+  eventId: uuid("event_id").references(() => events.id, { onDelete: "cascade" }).notNull(),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("interested"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({ pk: primaryKey({ columns: [table.eventId, table.userId] }) }));
 
 export const fundraisings = pgTable("fundraisings", {
   id: uuid("id").defaultRandom().primaryKey(),
