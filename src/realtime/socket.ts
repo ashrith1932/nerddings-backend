@@ -874,20 +874,26 @@ export function attachRealtimeServer(
                   ),
                 );
 
+              const clientMessageId =
+                message.clientMessageId ??
+                clientMessageIds.get(
+                  stored.id,
+                );
+
               sendToUser(
                 stored.senderId,
                 {
                   type: "message.read",
                   messageId:
                     stored.id,
-                  clientMessageId:
-                    message.clientMessageId ??
-                    clientMessageIds.get(
-                      stored.id,
-                    ),
+                  clientMessageId,
                   readAt:
                     readAt.toISOString(),
                 },
+              );
+
+              clientMessageIds.delete(
+                stored.id,
               );
 
               return;
