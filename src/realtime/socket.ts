@@ -3,7 +3,12 @@ import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 
 import jwt from "jsonwebtoken";
-import { and, eq, or } from "drizzle-orm";
+import {
+  and,
+  eq,
+  or,
+  isNull,
+} from "drizzle-orm";
 
 import { env } from "../config/env.js";
 import { db } from "../db/client.js";
@@ -969,22 +974,21 @@ export function attachRealtimeServer(
               }
 
               const unread =
-                await db
-                  .select()
-                  .from(messages)
-                  .where(
-                    and(
-                      eq(
-                        messages.conversationId,
-                        message.conversationId,
-                      ),
+  await db
+    .select()
+    .from(messages)
+    .where(
+      and(
+        eq(
+          messages.conversationId,
+          message.conversationId,
+        ),
 
-                      eq(
-                        messages.readAt,
-                        null,
-                      ),
-                    ),
-                  );
+        isNull(
+          messages.readAt,
+        ),
+      ),
+    );
 
               const now =
                 new Date();
