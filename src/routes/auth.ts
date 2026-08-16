@@ -168,63 +168,7 @@ export const authRouter = Router();
  * GET /api/v1/auth/oauth/github
  * GET /api/v1/auth/oauth/google
  */
-authRouter.get("/oauth/:provider", async (req, res) => {
-  const provider = req.params.provider;
 
-  if (provider !== "google" && provider !== "github") {
-    return res.status(404).json({
-      error: "Unsupported OAuth provider.",
-    });
-  }
-
-  const supabase = createSupabaseClient(req, res);
-
-  if (!supabase) {
-    return res.status(500).json({
-      error: "Supabase OAuth is not configured.",
-    });
-  }
-
-  try {
-    const { data, error } = await supabase.auth.signInWithOAuth({
-      provider,
-      options: {
-        redirectTo:
-          `${env.BACKEND_ORIGIN.replace(/\/$/, "")}/api/v1/auth/oauth/callback`,
-      },
-    });
-
-    if (error || !data.url) {
-      console.error("OAuth start error:", error);
-
-      return res.status(502).json({
-        error: "Unable to start OAuth sign-in.",
-      });
-    }
-
-    return res.redirect(data.url);
-  } catch (error) {
-    console.error("OAuth start exception:", error);
-
-    return res.status(500).json({
-      error: "Unable to start OAuth sign-in.",
-    });
-  }
-});
-
-/*
- * ---------------------------------------------------------
- * OAuth CALLBACK
- * ---------------------------------------------------------
- *
- * Supabase PKCE redirects here with:
- *
- * /api/v1/auth/oauth/callback?code=xxxxx
- *
- * NOT:
- *
- * /api/v1/auth/oauth/callback#access_token=xxxxx
- */
 authRouter.get("/oauth/callback", async (req, res) => {
   const code =
     typeof req.query.code === "string"
@@ -316,6 +260,55 @@ authRouter.get("/oauth/callback", async (req, res) => {
     );
   }
 });
+
+
+authRouter.get("/oauth/:provider", async (req, res) => {
+  const provider = req.params.provider;
+
+  if (provider !== "google" && provider !== "github") {
+    return res.status(404).json({
+      error: "Unsupported OAuth provider.",
+    });
+  }
+
+  const supabase = createSupabaseClient(req, res);
+
+  if (!supabase) {
+    return res.status(500).json({
+      error: "Supabase OAuth is not configured.",
+    });
+  }
+
+  try {
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: {
+        redirectTo:
+          `${env.BACKEND_ORIGIN.replace(/\/$/, "")}/api/v1/auth/oauth/callback`,
+      },
+    });
+
+    if (error || !data.url) {
+      console.error("OAuth start error:", error);
+
+      return res.status(502).json({
+        error: "Unable to start OAuth sign-in.",
+      });
+    }
+
+    return res.redirect(data.url);
+  } catch (error) {
+    console.error("OAuth start exception:", error);
+
+    return res.status(500).json({
+      error: "Unable to start OAuth sign-in.",
+    });
+  }
+});
+
+/*
+
+
 
 /*
  * ---------------------------------------------------------
