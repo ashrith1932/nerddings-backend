@@ -1,21 +1,19 @@
 import type { Server as HttpServer } from "node:http";
 import { createRequire } from "node:module";
+import { randomUUID } from "node:crypto";
+
 import jwt from "jsonwebtoken";
+import { and, eq, or } from "drizzle-orm";
 
 import { env } from "../config/env.js";
 import { db } from "../db/client.js";
+
 import {
   conversationMembers,
   conversations,
   messageRequests,
   messages,
 } from "../db/schema.js";
-import {
-  and,
-  eq,
-  or,
-} from "drizzle-orm";
-import { randomUUID } from "node:crypto";
 
 const require = createRequire(import.meta.url);
 
@@ -26,26 +24,40 @@ type RawData =
 
 type WebSocketLike = {
   readonly readyState: number;
+
   send(data: string): void;
-  close(code?: number, reason?: string): void;
+
+  close(
+    code?: number,
+    reason?: string,
+  ): void;
+
   on(
     event: "message",
-    listener: (raw: RawData) => void | Promise<void>,
+    listener: (
+      raw: RawData,
+    ) => void | Promise<void>,
   ): void;
+
   on(
     event: "close",
     listener: () => void,
   ): void;
+
   on(
     event: "error",
-    listener: (error: Error) => void,
+    listener: (
+      error: Error,
+    ) => void,
   ): void;
 };
 
 type WebSocketServerLike = {
   on(
     event: "connection",
-    listener: (socket: WebSocketLike) => void,
+    listener: (
+      socket: WebSocketLike,
+    ) => void,
   ): void;
 };
 
@@ -57,11 +69,11 @@ const {
     server: HttpServer;
     path?: string;
   }) => WebSocketServerLike;
+
   WebSocket: {
     OPEN: number;
   };
 };
-
 
 type AuthPayload = {
   sub?: string;
@@ -73,23 +85,44 @@ type ClientMessage =
       type: "auth";
       token: string;
     }
+
   | {
       type: "message.send";
+
       clientMessageId: string;
+
       recipientId: string;
+
       ciphertext: string;
       iv: string;
+
       senderKey: string;
       recipientKey: string;
+
       encryptionVersion: number;
     }
+
+  | {
+      type: "message.delivered";
+
+      messageId: string;
+    }
+
+  | {
+      type: "message.read";
+
+      messageId: string;
+    }
+
+  | {
+      type: "conversation.read";
+
+      conversationId: string;
+    }
+
   | {
       type: "ping";
     };
-
-type AuthenticatedSocket = WebSocketLike & {
-  __nerddingUserId?: string;
-};
 
 const clients = new Map<
   string,
@@ -143,9 +176,7 @@ function removeClient(
 
   sockets.delete(socket);
 
-  if (
-    sockets.size === 0
-  ) {
+  if (sockets.size === 0) {
     clients.delete(userId);
   }
 }
@@ -162,13 +193,13 @@ function sendToUser(
   }
 
   for (const socket of sockets) {
-    send(
-      socket,
-      payload,
-    );
+    send(socket, payload);
   }
 }
 
+/*
+ * Find a conversation between two users.
+ */
 async function findConversation(
   userA: string,
   userB: string,
@@ -211,6 +242,7 @@ async function findConversation(
               conversationMembers.conversationId,
               membership.conversationId,
             ),
+
             eq(
               conversationMembers.userId,
               userB,
@@ -227,6 +259,9 @@ async function findConversation(
   return null;
 }
 
+/*
+ * Create conversation.
+ */
 async function createConversation(
   userA: string,
   userB: string,
@@ -264,6 +299,9 @@ async function createConversation(
   return conversationId;
 }
 
+/*
+ * Check whether messaging is allowed.
+ */
 async function canMessage(
   userA: string,
   userB: string,
@@ -286,22 +324,26 @@ async function canMessage(
                 messageRequests.senderId,
                 userA,
               ),
+
               eq(
                 messageRequests.recipientId,
                 userB,
               ),
             ),
+
             and(
               eq(
                 messageRequests.senderId,
                 userB,
               ),
+
               eq(
                 messageRequests.recipientId,
                 userA,
               ),
             ),
           ),
+
           eq(
             messageRequests.status,
             "accepted",
@@ -313,6 +355,9 @@ async function canMessage(
   return Boolean(request);
 }
 
+/*
+ * JWT authentication.
+ */
 function authenticate(
   token: string,
 ) {
@@ -336,8 +381,7 @@ function authenticate(
     }
 
     return {
-      userId:
-        payload.sub,
+      userId: payload.sub,
       accountType:
         payload.accountType,
     };
@@ -346,12 +390,115 @@ function authenticate(
   }
 }
 
+/*
+ * Get the other participant.
+ */
+async function getOtherParticipant(
+  conversationId: string,
+  senderId: string,
+) {
+  if (!db) {
+    return null;
+  }
+
+  const [member] =
+    await db
+      .select({
+        userId:
+          conversationMembers.userId,
+      })
+      .from(
+        conversationMembers,
+      )
+      .where(
+        and(
+          eq(
+            conversationMembers.conversationId,
+            conversationId,
+          ),
+
+          // We want the other user.
+        ),
+      );
+
+  const members =
+    await db
+      .select({
+        userId:
+          conversationMembers.userId,
+      })
+      .from(
+        conversationMembers,
+      )
+      .where(
+        eq(
+          conversationMembers.conversationId,
+          conversationId,
+        ),
+      );
+
+  const other =
+    members.find(
+      (member) =>
+        member.userId !==
+        senderId,
+    );
+
+  return other?.userId ?? null;
+}
+
+/*
+ * Build the message sent to clients.
+ */
+function serializeMessage(
+  message: typeof messages.$inferSelect,
+) {
+  return {
+    id: message.id,
+
+    conversationId:
+      message.conversationId,
+
+    senderId:
+      message.senderId,
+
+    ciphertext:
+      message.ciphertext,
+
+    iv:
+      message.iv,
+
+    senderKey:
+      message.senderKey,
+
+    recipientKey:
+      message.recipientKey,
+
+    encryptionVersion:
+      message.encryptionVersion,
+
+    deliveredAt:
+      message.deliveredAt
+        ? message.deliveredAt.toISOString()
+        : null,
+
+    readAt:
+      message.readAt
+        ? message.readAt.toISOString()
+        : null,
+
+    createdAt:
+      message.createdAt.toISOString(),
+  };
+}
+
 export function attachRealtimeServer(
   server: HttpServer,
 ) {
   const wss =
-  new WebSocketServer({
+    new WebSocketServer({
       server,
+
       path:
         "/api/v1/messages/ws",
     });
@@ -376,13 +523,17 @@ export function attachRealtimeServer(
                 raw.toString(),
               ) as ClientMessage;
 
+            /*
+             * ---------------------------
+             * PING
+             * ---------------------------
+             */
             if (
               message.type ===
               "ping"
             ) {
               send(socket, {
-                type:
-                  "pong",
+                type: "pong",
                 timestamp:
                   Date.now(),
               });
@@ -390,6 +541,11 @@ export function attachRealtimeServer(
               return;
             }
 
+            /*
+             * ---------------------------
+             * AUTH
+             * ---------------------------
+             */
             if (
               message.type ===
               "auth"
@@ -403,6 +559,7 @@ export function attachRealtimeServer(
                 send(socket, {
                   type:
                     "auth.error",
+
                   error:
                     "Invalid authentication token.",
                 });
@@ -418,11 +575,6 @@ export function attachRealtimeServer(
               authenticatedUserId =
                 auth.userId;
 
-              (
-                socket as AuthenticatedSocket
-              ).__nerddingUserId =
-                auth.userId;
-
               addClient(
                 auth.userId,
                 socket,
@@ -431,19 +583,27 @@ export function attachRealtimeServer(
               send(socket, {
                 type:
                   "auth.success",
+
                 userId:
                   auth.userId,
               });
 
+              console.log(
+                `[WS] User ${auth.userId} connected`,
+              );
+
               return;
             }
 
+            /*
+             * Everything below requires auth.
+             */
             if (
               !authenticatedUserId
             ) {
               send(socket, {
-                type:
-                  "error",
+                type: "error",
+
                 error:
                   "Authenticate the WebSocket first.",
               });
@@ -451,6 +611,11 @@ export function attachRealtimeServer(
               return;
             }
 
+            /*
+             * ---------------------------
+             * SEND MESSAGE
+             * ---------------------------
+             */
             if (
               message.type ===
               "message.send"
@@ -459,8 +624,10 @@ export function attachRealtimeServer(
                 send(socket, {
                   type:
                     "message.failed",
+
                   clientMessageId:
                     message.clientMessageId,
+
                   error:
                     "Database is unavailable.",
                 });
@@ -478,8 +645,10 @@ export function attachRealtimeServer(
                 send(socket, {
                   type:
                     "message.failed",
+
                   clientMessageId:
                     message.clientMessageId,
+
                   error:
                     "Messaging is not accepted.",
                 });
@@ -497,27 +666,33 @@ export function attachRealtimeServer(
                   message.recipientId,
                 ));
 
-              const [
-                created,
-              ] = await db
-                .insert(messages)
-                .values({
-                  conversationId,
-                  senderId:
-                    authenticatedUserId,
-                  body: "",
-                  ciphertext:
-                    message.ciphertext,
-                  iv:
-                    message.iv,
-                  senderKey:
-                    message.senderKey,
-                  recipientKey:
-                    message.recipientKey,
-                  encryptionVersion:
-                    message.encryptionVersion,
-                })
-                .returning();
+              const [created] =
+                await db
+                  .insert(messages)
+                  .values({
+                    conversationId,
+
+                    senderId:
+                      authenticatedUserId,
+
+                    body: "",
+
+                    ciphertext:
+                      message.ciphertext,
+
+                    iv:
+                      message.iv,
+
+                    senderKey:
+                      message.senderKey,
+
+                    recipientKey:
+                      message.recipientKey,
+
+                    encryptionVersion:
+                      message.encryptionVersion,
+                  })
+                  .returning();
 
               await db
                 .update(
@@ -534,44 +709,333 @@ export function attachRealtimeServer(
                   ),
                 );
 
-              const outgoing = {
-                id:
-                  created.id,
-                conversationId,
-                senderId:
-                  authenticatedUserId,
-                ciphertext:
-                  created.ciphertext,
-                iv:
-                  created.iv,
-                senderKey:
-                  created.senderKey,
-                recipientKey:
-                  created.recipientKey,
-                encryptionVersion:
-                  created.encryptionVersion,
-                createdAt:
-                  created.createdAt.toISOString(),
-              };
+              const outgoing =
+                serializeMessage(
+                  created,
+                );
 
+              /*
+               * Sender gets ACK.
+               *
+               * sending → sent
+               */
               send(socket, {
                 type:
                   "message.sent",
+
                 clientMessageId:
                   message.clientMessageId,
+
                 message:
                   outgoing,
               });
 
+              /*
+               * Recipient gets realtime message.
+               */
               sendToUser(
                 message.recipientId,
                 {
                   type:
                     "message.new",
+
                   message:
                     outgoing,
                 },
               );
+
+              return;
+            }
+
+            /*
+             * ---------------------------
+             * DELIVERED
+             * ---------------------------
+             */
+            if (
+              message.type ===
+              "message.delivered"
+            ) {
+              if (!db) {
+                return;
+              }
+
+              const [stored] =
+                await db
+                  .select()
+                  .from(messages)
+                  .where(
+                    eq(
+                      messages.id,
+                      message.messageId,
+                    ),
+                  )
+                  .limit(1);
+
+              if (!stored) {
+                return;
+              }
+
+              /*
+               * Make sure the current user
+               * is actually a participant.
+               */
+              const [membership] =
+                await db
+                  .select()
+                  .from(
+                    conversationMembers,
+                  )
+                  .where(
+                    and(
+                      eq(
+                        conversationMembers.conversationId,
+                        stored.conversationId,
+                      ),
+
+                      eq(
+                        conversationMembers.userId,
+                        authenticatedUserId,
+                      ),
+                    ),
+                  )
+                  .limit(1);
+
+              if (!membership) {
+                return;
+              }
+
+              const deliveredAt =
+                new Date();
+
+              await db
+                .update(messages)
+                .set({
+                  deliveredAt,
+                })
+                .where(
+                  eq(
+                    messages.id,
+                    stored.id,
+                  ),
+                );
+
+              /*
+               * Tell original sender.
+               */
+              sendToUser(
+                stored.senderId,
+                {
+                  type:
+                    "message.delivered",
+
+                  messageId:
+                    stored.id,
+
+                  deliveredAt:
+                    deliveredAt.toISOString(),
+                },
+              );
+
+              return;
+            }
+
+            /*
+             * ---------------------------
+             * READ ONE MESSAGE
+             * ---------------------------
+             */
+            if (
+              message.type ===
+              "message.read"
+            ) {
+              if (!db) {
+                return;
+              }
+
+              const [stored] =
+                await db
+                  .select()
+                  .from(messages)
+                  .where(
+                    eq(
+                      messages.id,
+                      message.messageId,
+                    ),
+                  )
+                  .limit(1);
+
+              if (!stored) {
+                return;
+              }
+
+              const [membership] =
+                await db
+                  .select()
+                  .from(
+                    conversationMembers,
+                  )
+                  .where(
+                    and(
+                      eq(
+                        conversationMembers.conversationId,
+                        stored.conversationId,
+                      ),
+
+                      eq(
+                        conversationMembers.userId,
+                        authenticatedUserId,
+                      ),
+                    ),
+                  )
+                  .limit(1);
+
+              if (!membership) {
+                return;
+              }
+
+              const readAt =
+                new Date();
+
+              await db
+                .update(messages)
+                .set({
+                  deliveredAt:
+                    stored.deliveredAt ??
+                    readAt,
+
+                  readAt,
+                })
+                .where(
+                  eq(
+                    messages.id,
+                    stored.id,
+                  ),
+                );
+
+              sendToUser(
+                stored.senderId,
+                {
+                  type:
+                    "message.read",
+
+                  messageId:
+                    stored.id,
+
+                  readAt:
+                    readAt.toISOString(),
+                },
+              );
+
+              return;
+            }
+
+            /*
+             * ---------------------------
+             * READ ENTIRE CONVERSATION
+             * ---------------------------
+             */
+            if (
+              message.type ===
+              "conversation.read"
+            ) {
+              if (!db) {
+                return;
+              }
+
+              const [membership] =
+                await db
+                  .select()
+                  .from(
+                    conversationMembers,
+                  )
+                  .where(
+                    and(
+                      eq(
+                        conversationMembers.conversationId,
+                        message.conversationId,
+                      ),
+
+                      eq(
+                        conversationMembers.userId,
+                        authenticatedUserId,
+                      ),
+                    ),
+                  )
+                  .limit(1);
+
+              if (!membership) {
+                return;
+              }
+
+              const unread =
+                await db
+                  .select()
+                  .from(messages)
+                  .where(
+                    and(
+                      eq(
+                        messages.conversationId,
+                        message.conversationId,
+                      ),
+
+                      eq(
+                        messages.readAt,
+                        null,
+                      ),
+                    ),
+                  );
+
+              const now =
+                new Date();
+
+              for (
+                const stored of unread
+              ) {
+                /*
+                 * Don't mark our own
+                 * messages as read.
+                 */
+                if (
+                  stored.senderId ===
+                  authenticatedUserId
+                ) {
+                  continue;
+                }
+
+                await db
+                  .update(messages)
+                  .set({
+                    deliveredAt:
+                      stored.deliveredAt ??
+                      now,
+
+                    readAt:
+                      now,
+                  })
+                  .where(
+                    eq(
+                      messages.id,
+                      stored.id,
+                    ),
+                  );
+
+                sendToUser(
+                  stored.senderId,
+                  {
+                    type:
+                      "message.read",
+
+                    messageId:
+                      stored.id,
+
+                    readAt:
+                      now.toISOString(),
+                  },
+                );
+              }
+
+              return;
             }
           } catch (error) {
             console.error(
@@ -580,8 +1044,8 @@ export function attachRealtimeServer(
             );
 
             send(socket, {
-              type:
-                "error",
+              type: "error",
+
               error:
                 "Invalid realtime message.",
             });
@@ -598,6 +1062,10 @@ export function attachRealtimeServer(
             removeClient(
               authenticatedUserId,
               socket,
+            );
+
+            console.log(
+              `[WS] User ${authenticatedUserId} disconnected`,
             );
           }
         },

@@ -110,16 +110,48 @@ export const conversationMembers = pgTable("conversation_members", {
 
 export const messages = pgTable("messages", {
   id: uuid("id").defaultRandom().primaryKey(),
-  conversationId: uuid("conversation_id").references(() => conversations.id, { onDelete: "cascade" }).notNull(),
-  senderId: uuid("sender_id").references(() => users.id).notNull(),
+
+  conversationId: uuid("conversation_id")
+    .references(() => conversations.id, {
+      onDelete: "cascade",
+    })
+    .notNull(),
+
+  senderId: uuid("sender_id")
+    .references(() => users.id)
+    .notNull(),
+
   body: text("body").notNull(),
+
   ciphertext: text("ciphertext"),
   iv: text("iv"),
+
   senderKey: text("sender_key"),
   recipientKey: text("recipient_key"),
-  encryptionVersion: integer("encryption_version").notNull().default(1),
-  readAt: timestamp("read_at", { withTimezone: true }),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+
+  encryptionVersion: integer("encryption_version")
+    .notNull()
+    .default(1),
+
+  /*
+   * Message reached recipient's realtime client.
+   */
+  deliveredAt: timestamp("delivered_at", {
+    withTimezone: true,
+  }),
+
+  /*
+   * Recipient actually opened/read it.
+   */
+  readAt: timestamp("read_at", {
+    withTimezone: true,
+  }),
+
+  createdAt: timestamp("created_at", {
+    withTimezone: true,
+  })
+    .defaultNow()
+    .notNull(),
 });
 
 export const messageRequests = pgTable("message_requests", {
