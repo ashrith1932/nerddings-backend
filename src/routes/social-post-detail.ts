@@ -25,6 +25,7 @@ function serializePost(row: Row, media: Row[], commentsTree: Row[]) {
     comments: Number(row.comments ?? 0),
     reposts: Number(row.reposts ?? 0),
     saves: Number(row.saves ?? 0),
+    views: Number(row.views ?? 0),
     proofOfWorkScore: Number(row.proof_of_work_score ?? 0),
     linkUrl: row.link_url ?? null,
     liked: Boolean(row.viewer_liked),
@@ -68,6 +69,7 @@ socialPostDetailRouter.get("/posts/:postId", async (req, res) => {
              (SELECT COUNT(*)::int FROM post_comments x WHERE x.post_id=p.id) comments,
              (SELECT COUNT(*)::int FROM post_reposts x WHERE x.post_id=p.id) reposts,
              (SELECT COUNT(*)::int FROM post_saves x WHERE x.post_id=p.id) saves,
+             (SELECT COUNT(*)::int FROM post_views x WHERE x.post_id=p.id) views,
              ${req.auth?.subjectId ? sql`EXISTS(SELECT 1 FROM post_likes x WHERE x.post_id=p.id AND x.user_id=${req.auth.subjectId})` : sql`false`} viewer_liked,
              ${req.auth?.subjectId ? sql`EXISTS(SELECT 1 FROM post_saves x WHERE x.post_id=p.id AND x.user_id=${req.auth.subjectId})` : sql`false`} viewer_saved,
              ${req.auth?.subjectId ? sql`EXISTS(SELECT 1 FROM post_reposts x WHERE x.post_id=p.id AND x.user_id=${req.auth.subjectId})` : sql`false`} viewer_reposted
@@ -76,6 +78,17 @@ socialPostDetailRouter.get("/posts/:postId", async (req, res) => {
     `);
     const post = postRows[0];
     if (!post) return res.status(404).json({ error: "Post not found" });
+
+    if (req.auth?.subjectId) {
+      const inserted = await executeRows(sql`
+        INSERT INTO post_views(id,post_id,user_id)
+        VALUES (${randomUUID()},${req.params.postId},${req.auth.subjectId})
+        ON CONFLICT (post_id,user_id) DO NOTHING
+        RETURNING id
+      `);
+      if (inserted[0]) post.views = Number(post.views ?? 0) + 1;
+    }
+
     const media = await executeRows(sql`SELECT public_url,mime_type FROM post_media WHERE post_id=${req.params.postId} ORDER BY sort_order ASC`);
     const commentsTree = await loadComments(String(req.params.postId));
     return res.json({ data: serializePost(post, media, commentsTree) });
