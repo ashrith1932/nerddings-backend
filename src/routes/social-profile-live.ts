@@ -1,154 +1,132 @@
 import { Router } from "express";
-import { sql } from "drizzle-orm";
+import { sql, eq, ilike } from "drizzle-orm";
 import { db } from "../db/client.js";
+import { users } from "../db/schema.js";
 
 export const socialProfileLiveRouter = Router();
 type Row = Record<string, any>;
-const rows = async (query: any): Promise<Row[]> => {
+
+async function executeRows(query: any): Promise<Row[]> {
   const result = await db!.execute(query) as unknown as Row[] | { rows: Row[] };
   return Array.isArray(result) ? result : result.rows;
-};
+}
 
 socialProfileLiveRouter.get("/users/:username/profile-live", async (req, res) => {
   if (!db) return res.status(404).json({ error: "Profile not found" });
 
   try {
-    const [user] = await rows(sql`
-      SELECT id,name,username,avatar_url,bio,location,account_type,interests,trust_score,created_at
-      FROM users
-      WHERE lower(username)=lower(${req.params.username})
-      LIMIT 1
-    `);
+    const username = String(req.params.username);
+    const [user] = await db.select({
+      id: users.id,
+      name: users.name,
+      username: users.username,
+      email: users.email,
+      avatarUrl: users.avatarUrl,
+      bio: users.bio,
+      location: users.location,
+      accountType: users.accountType,
+      interests: users.interests,
+      trustScore: users.trustScore,
+      createdAt: users.createdAt,
+    }).from(users).where(ilike(users.username, username)).limit(1);
+
     if (!user) return res.status(404).json({ error: "Profile not found" });
 
-    let profileMedia: Row = {};
+    let media: Row = {};
     try {
-      const [media] = await rows(sql`SELECT cover_url,profile_logo_url,cover_position_x,cover_position_y FROM users WHERE id=${user.id} LIMIT 1`);
-      profileMedia = media ?? {};
-    } catch {
-      // Older production databases may not have the optional profile-media columns yet.
+      const [row] = await executeRows(sql`SELECT cover_url,profile_logo_url,cover_position_x,cover_position_y FROM users WHERE id=${user.id} LIMIT 1`);
+      media = row ?? {};
+    } catch (error) {
+      console.warn("[SocialProfileLive] Optional profile media unavailable:", error);
     }
 
-    let stats: Row = { followers: 0, following: 0, projects: 0, posts: 0 };
+    let stats = { followers: 0, following: 0, projects: 0, posts: 0 };
     try {
-      const [result] = await rows(sql`
+      const [row] = await executeRows(sql`
         SELECT
-          (SELECT COUNT(*)::int FROM follows WHERE following_id=${user.id}) followers,
-          (SELECT COUNT(*)::int FROM follows WHERE follower_id=${user.id}) following,
-          (SELECT COUNT(*)::int FROM projects WHERE owner_id=${user.id} OR id IN (SELECT project_id FROM project_collaborators WHERE user_id=${user.id} AND status='accepted')) projects,
-          (SELECT COUNT(*)::int FROM posts WHERE author_id=${user.id}) posts
+          (SELECT COUNT(*)::int FROM follows WHERE following_id=${user.id}) AS followers,
+          (SELECT COUNT(*)::int FROM follows WHERE follower_id=${user.id}) AS following,
+          (SELECT COUNT(*)::int FROM projects WHERE owner_id=${user.id}) AS projects,
+          (SELECT COUNT(*)::int FROM posts WHERE author_id=${user.id}) AS posts
       `);
-      stats = result ?? stats;
-    } catch {
-      try {
-        const [result] = await rows(sql`
-          SELECT
-            (SELECT COUNT(*)::int FROM follows WHERE following_id=${user.id}) followers,
-            (SELECT COUNT(*)::int FROM follows WHERE follower_id=${user.id}) following,
-            (SELECT COUNT(*)::int FROM projects WHERE owner_id=${user.id}) projects,
-            (SELECT COUNT(*)::int FROM posts WHERE author_id=${user.id}) posts
-        `);
-        stats = result ?? stats;
-      } catch {
-        // Return zeroed stats instead of failing the whole profile.
-      }
+      if (row) stats = { followers: Number(row.followers ?? 0), following: Number(row.following ?? 0), projects: Number(row.projects ?? 0), posts: Number(row.posts ?? 0) };
+    } catch (error) {
+      console.warn("[SocialProfileLive] Stats query failed:", error);
     }
 
     let projects: Row[] = [];
     try {
-      projects = await rows(sql`
-        SELECT id,name,slug,description,stage,github_url,created_at
-        FROM projects
-        WHERE owner_id=${user.id}
-           OR id IN (SELECT project_id FROM project_collaborators WHERE user_id=${user.id} AND status='accepted')
-        ORDER BY created_at DESC
-        LIMIT 24
-      `);
-    } catch {
-      projects = await rows(sql`
+      projects = await executeRows(sql`
         SELECT id,name,slug,description,stage,github_url,created_at
         FROM projects WHERE owner_id=${user.id}
         ORDER BY created_at DESC LIMIT 24
       `);
+    } catch (error) {
+      console.warn("[SocialProfileLive] Projects query failed:", error);
     }
 
     let posts: Row[] = [];
     try {
-      posts = await rows(sql`
+      posts = await executeRows(sql`
         SELECT p.id,p.author_id,p.body,p.created_at,p.project_id,p.quote_post_id,
-          COUNT(DISTINCT pl.user_id)::int likes,
-          COUNT(DISTINCT pc.id)::int comments,
-          COUNT(DISTINCT pr.user_id)::int reposts,
-          COUNT(DISTINCT ps.user_id)::int saves
-        FROM posts p
-        LEFT JOIN post_likes pl ON pl.post_id=p.id
-        LEFT JOIN post_comments pc ON pc.post_id=p.id
-        LEFT JOIN post_reposts pr ON pr.post_id=p.id
-        LEFT JOIN post_saves ps ON ps.post_id=p.id
-        WHERE p.author_id=${user.id}
-        GROUP BY p.id
-        ORDER BY p.created_at DESC
-        LIMIT 50
+          (SELECT COUNT(*)::int FROM post_likes x WHERE x.post_id=p.id) likes,
+          (SELECT COUNT(*)::int FROM post_comments x WHERE x.post_id=p.id) comments,
+          (SELECT COUNT(*)::int FROM post_reposts x WHERE x.post_id=p.id) reposts,
+          (SELECT COUNT(*)::int FROM post_saves x WHERE x.post_id=p.id) saves
+        FROM posts p WHERE p.author_id=${user.id}
+        ORDER BY p.created_at DESC LIMIT 50
       `);
-    } catch {
-      posts = [];
+    } catch (error) {
+      console.warn("[SocialProfileLive] Posts query failed:", error);
     }
 
     let affiliations: Row[] = [];
     try {
-      affiliations = await rows(sql`
+      affiliations = await executeRows(sql`
         SELECT a.id,a.name,a.slug,a.type,a.website,a.verified,aa.role
         FROM agent_affiliations aa
         JOIN agents a ON a.id=aa.agent_id
         WHERE aa.user_id=${user.id}
         ORDER BY aa.verified_at DESC
       `);
-    } catch {
-      affiliations = [];
+    } catch (error) {
+      console.warn("[SocialProfileLive] Affiliations query failed:", error);
     }
 
-    return res.json({
-      data: {
-        user: {
-          ...user,
-          ...profileMedia,
-          avatarUrl: user.avatar_url,
-          coverUrl: profileMedia.cover_url ?? null,
-          profileLogoUrl: profileMedia.profile_logo_url ?? null,
-          coverPositionX: Number(profileMedia.cover_position_x ?? 50),
-          coverPositionY: Number(profileMedia.cover_position_y ?? 50),
-        },
-        stats: {
-          followers: Number(stats.followers ?? 0),
-          following: Number(stats.following ?? 0),
-          projects: Number(stats.projects ?? projects.length),
-          posts: Number(stats.posts ?? posts.length),
-        },
-        projects,
-        posts: posts.map((p) => ({
-          id: p.id,
-          authorId: p.author_id,
-          text: p.body,
-          createdAt: p.created_at,
-          projectId: p.project_id,
-          quotePostId: p.quote_post_id,
-          likes: Number(p.likes ?? 0),
-          comments: Number(p.comments ?? 0),
-          reposts: Number(p.reposts ?? 0),
-          saves: Number(p.saves ?? 0),
-        })),
-        affiliations: affiliations.map((a) => ({
-          id: a.id,
-          name: a.name,
-          slug: a.slug,
-          type: a.type,
-          website: a.website,
-          verified: Boolean(a.verified),
-          role: a.role,
-          status: "accepted",
-        })),
+    return res.json({ data: {
+      user: {
+        ...user,
+        avatarUrl: user.avatarUrl,
+        coverUrl: media.cover_url ?? null,
+        profileLogoUrl: media.profile_logo_url ?? null,
+        coverPositionX: Number(media.cover_position_x ?? 50),
+        coverPositionY: Number(media.cover_position_y ?? 50),
       },
-    });
+      stats,
+      projects,
+      posts: posts.map((post) => ({
+        id: post.id,
+        authorId: post.author_id,
+        text: post.body,
+        createdAt: post.created_at,
+        projectId: post.project_id,
+        quotePostId: post.quote_post_id,
+        likes: Number(post.likes ?? 0),
+        comments: Number(post.comments ?? 0),
+        reposts: Number(post.reposts ?? 0),
+        saves: Number(post.saves ?? 0),
+      })),
+      affiliations: affiliations.map((item) => ({
+        id: item.id,
+        name: item.name,
+        slug: item.slug,
+        type: item.type,
+        website: item.website,
+        verified: Boolean(item.verified),
+        role: item.role,
+        status: "accepted",
+      })),
+    } });
   } catch (error) {
     console.error("[SocialProfileLive] Failed to load profile:", error);
     return res.status(500).json({ error: "Unable to load profile" });
