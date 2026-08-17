@@ -5,8 +5,7 @@ import { requireAuth } from "../middleware/auth.js";
 import { feedPosts } from "../lib/store.js";
 import { db } from "../db/client.js";
 import { notifications, postComments, postMedia, posts, postLikes, postSaves, postReposts, follows as followsTable } from "../db/schema.js";
-import { and, eq } from "drizzle-orm";
-import { sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 
 const actionState = new Map<string, { likes: Set<string>; saves: Set<string>; reposts: Set<string> }>();
 const comments = new Map<string, { id: string; postId: string; authorId: string; body: string; createdAt: string }[]>();
@@ -40,51 +39,53 @@ socialRouter.post("/posts", requireAuth, async (req, res) => {
   const id = randomUUID();
 
   if (db) {
-    let projectId: string | null = null;
-    if (parsed.data.projectSlug) {
-      // projects currently have owner_id only; collaborator support belongs in a
-      // future migration and must not be queried until its table is introduced.
-      const projectRows = await db.execute(sql`
-        SELECT id
-        FROM projects
-        WHERE lower(slug)=lower(${parsed.data.projectSlug})
-          AND owner_id=${req.auth!.subjectId}
-        LIMIT 1
-      `) as unknown as Array<{ id: string }>;
-      if (!projectRows[0]) return res.status(403).json({ error: "You can only attach projects you own." });
-      projectId = projectRows[0].id;
+    try {
+      let projectId: string | null = null;
+      if (parsed.data.projectSlug) {
+        const projectRows = await db.execute(sql`
+          SELECT id FROM projects
+          WHERE lower(slug)=lower(${parsed.data.projectSlug}) AND owner_id=${req.auth!.subjectId}
+          LIMIT 1
+        `) as unknown as Array<{ id: string }>;
+        if (!projectRows[0]) return res.status(403).json({ error: "You can only attach projects you own." });
+        projectId = projectRows[0].id;
+      }
+
+      const [created] = await db.insert(posts).values({
+        id,
+        authorId: req.auth!.subjectId,
+        body: parsed.data.body,
+        projectId,
+        linkUrl: parsed.data.linkUrl ?? null,
+        proofOfWorkScore: parsed.data.media.length ? "0.7" : "0",
+      }).returning();
+
+      if (parsed.data.media.length) {
+        await db.insert(postMedia).values(parsed.data.media.map((media, index) => ({
+          postId: created?.id ?? id,
+          storagePath: media.path,
+          publicUrl: media.publicUrl,
+          mimeType: media.mimeType,
+          sortOrder: index,
+        })));
+      }
+
+      return res.status(201).json({ data: {
+        id: created?.id ?? id,
+        body: parsed.data.body,
+        projectId,
+        projectSlug: parsed.data.projectSlug ?? null,
+        linkUrl: parsed.data.linkUrl ?? null,
+        media: parsed.data.media,
+      } });
+    } catch (error) {
+      console.error("[Social] Failed to create post:", error);
+      return res.status(500).json({ error: "Unable to publish this post right now." });
     }
-
-    const [created] = await db.insert(posts).values({
-      id,
-      authorId: req.auth!.subjectId,
-      body: parsed.data.body,
-      projectId,
-      proofOfWorkScore: parsed.data.media.length ? "0.7" : "0",
-    }).returning();
-
-    if (parsed.data.media.length) {
-      await db.insert(postMedia).values(parsed.data.media.map((media, index) => ({
-        postId: created?.id ?? id,
-        storagePath: media.path,
-        publicUrl: media.publicUrl,
-        mimeType: media.mimeType,
-        sortOrder: index,
-      })));
-    }
-
-    return res.status(201).json({ data: {
-      id: created?.id ?? id,
-      body: parsed.data.body,
-      projectId,
-      projectSlug: parsed.data.projectSlug ?? null,
-      linkUrl: null,
-      media: parsed.data.media,
-    } });
   }
 
   feedPosts.unshift({ id, authorId: req.auth!.subjectId, text: parsed.data.body, topic: parsed.data.topic, createdAt: new Date().toISOString(), projectSlug: parsed.data.projectSlug, signals: { relevance: 0.7, freshness: 1, proofOfWork: parsed.data.media.length ? 0.7 : 0.25, meaningfulEngagement: 0, trust: 0.5, projectActivity: 0.4, relationship: 0.5, spamPenalty: 0 } });
-  return res.status(201).json({ data: { id, body: parsed.data.body, projectSlug: parsed.data.projectSlug ?? null, linkUrl: null, media: parsed.data.media } });
+  return res.status(201).json({ data: { id, body: parsed.data.body, projectSlug: parsed.data.projectSlug ?? null, linkUrl: parsed.data.linkUrl ?? null, media: parsed.data.media } });
 });
 
 socialRouter.get("/posts/:postId/comments", (req, res) => res.json({ data: comments.get(String(req.params.postId)) ?? [] }));
@@ -104,15 +105,20 @@ socialRouter.post("/posts/:postId/comments", requireAuth, async (req, res) => {
 socialRouter.post("/posts/:postId/:action", requireAuth, async (req, res) => {
   const postId = String(req.params.postId);
   const action = String(req.params.action);
-  if (!['like', 'save', 'repost'].includes(action)) return res.status(404).json({ error: "Unknown post action." });
+  if (!["like", "save", "repost"].includes(action)) return res.status(404).json({ error: "Unknown post action." });
   if (db) {
-    const table = action === "like" ? postLikes : action === "save" ? postSaves : postReposts;
-    const where = and(eq(table.postId, postId), eq(table.userId, req.auth!.subjectId));
-    const [existing] = await db.select().from(table).where(where).limit(1);
-    if (existing) await db.delete(table).where(where);
-    else await db.insert(table).values({ postId, userId: req.auth!.subjectId });
-    if (!existing && action !== "save") await notifyPostOwner(postId, req.auth!.subjectId, action, action === "like" ? "liked your post" : "nerdded your post");
-    return res.json({ data: { action, active: !existing } });
+    try {
+      const table = action === "like" ? postLikes : action === "save" ? postSaves : postReposts;
+      const where = and(eq(table.postId, postId), eq(table.userId, req.auth!.subjectId));
+      const [existing] = await db.select().from(table).where(where).limit(1);
+      if (existing) await db.delete(table).where(where);
+      else await db.insert(table).values({ postId, userId: req.auth!.subjectId });
+      if (!existing && action !== "save") await notifyPostOwner(postId, req.auth!.subjectId, action, action === "like" ? "liked your post" : "nerdded your post");
+      return res.json({ data: { action, active: !existing } });
+    } catch (error) {
+      console.error(`[Social] Failed to ${action} post:`, error);
+      return res.status(500).json({ error: "That post action could not be saved." });
+    }
   }
   const state = stateFor(postId);
   const target = action === "like" ? state.likes : action === "save" ? state.saves : state.reposts;
