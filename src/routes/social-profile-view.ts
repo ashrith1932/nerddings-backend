@@ -20,7 +20,7 @@ socialProfileViewRouter.get("/users/:username/profile", async (req, res) => {
 
   try {
     const users = await executeRows<Row>(sql`
-      SELECT id,name,username,email,avatar_url,bio,location,account_type,interests,trust_score,created_at
+      SELECT id,name,username,avatar_url,bio,location,account_type,interests,trust_score,created_at
       FROM users
       WHERE lower(username)=lower(${username})
       LIMIT 1
@@ -39,8 +39,7 @@ socialProfileViewRouter.get("/users/:username/profile", async (req, res) => {
     const counts = countRows[0] ?? { followers: 0, following: 0, projects: 0, posts: 0 };
 
     // Keep this projection aligned with the actual projects table schema.
-    // logo_url and website_url are not columns in db/schema.ts; requesting
-    // them made every profile request fail with PostgreSQL 42703.
+    // logo_url and website_url are not columns in db/schema.ts.
     const projects = await executeRows<Row>(sql`
       SELECT id,name,slug,description,stage,github_url,created_at
       FROM projects
