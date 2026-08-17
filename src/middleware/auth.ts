@@ -31,10 +31,10 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
 
 export async function requireAgent(req: Request, res: Response, next: NextFunction) {
   if (!req.auth) return res.status(401).json({ error: "Authentication required" });
-  if (req.auth.accountType !== "agent") return res.status(403).json({ code: "AGENT_ONLY", error: "Only verified Agents can create or manage fundraising profiles." });
+  if (req.auth.accountType !== "agent") return res.status(403).json({ code: "AGENT_ONLY", error: "Only verified Agents can create or manage official events and fundraising profiles." });
 
   if (db) {
-    const rows = await db.execute(sql`
+    const result = await db.execute(sql`
       SELECT 1
       FROM users u
       JOIN agents a ON a.id=u.id
@@ -43,7 +43,8 @@ export async function requireAgent(req: Request, res: Response, next: NextFuncti
         AND a.verified=true
         AND a.verification_status='approved'
       LIMIT 1
-    `) as unknown as Array<Record<string, any>>;
+    `);
+    const rows = Array.isArray(result) ? result : result.rows ?? [];
     if (!rows[0]) return res.status(403).json({ code: "AGENT_NOT_VERIFIED", error: "Your Agent profile is not verified by the Nerdding team." });
   }
 

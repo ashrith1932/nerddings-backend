@@ -113,9 +113,9 @@ export async function ensureSocialSchema() {
     )
   `);
 
-  // Hashtag compatibility: some existing databases were initialized before the
-  // canonical `tag` column was introduced. IF NOT EXISTS on the table alone
-  // does not repair an already-existing table, so make the column explicit here.
+  // Some existing databases were initialized before the canonical `tag`
+  // column existed. Creating the table conditionally does not repair that
+  // older table, so explicitly add/backfill the compatible column at startup.
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS hashtags(
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -133,7 +133,7 @@ export async function ensureSocialSchema() {
     )
     WHERE tag IS NULL
   `);
-  await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS hashtags_tag_unique_idx ON hashtags(tag) WHERE tag IS NOT NULL`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS hashtags_tag_idx ON hashtags(tag)`);
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS post_hashtags(
       post_id uuid NOT NULL REFERENCES posts(id) ON DELETE CASCADE,

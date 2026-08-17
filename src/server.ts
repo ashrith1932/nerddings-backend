@@ -3,6 +3,7 @@ import { app } from "./app.js";
 import { env } from "./config/env.js";
 import { isDatabaseConfigured } from "./db/client.js";
 import { ensureSocialSchema } from "./db/ensure-social-schema.js";
+import { ensureEventsSchema } from "./db/ensure-events-schema.js";
 import { attachRealtimeServer } from "./realtime/socket.js";
 
 if (env.NODE_ENV === "production" && !isDatabaseConfigured()) {
@@ -16,6 +17,7 @@ const server = http.createServer(app);
 attachRealtimeServer(server);
 
 await ensureSocialSchema();
+await ensureEventsSchema();
 
 server.listen(env.PORT, () => {
   console.log(`Nerdding backend listening on http://localhost:${env.PORT}`);
