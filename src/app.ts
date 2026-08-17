@@ -5,6 +5,7 @@ import { env } from "./config/env.js";
 import { optionalAuth } from "./middleware/auth.js";
 import { discoveryRouter } from "./routes/discovery.js";
 import { feedRouter } from "./routes/feed.js";
+import { socialFeedViewRouter } from "./routes/social-feed-view.js";
 import { socialFeedRouter } from "./routes/social-feed.js";
 import { socialProjectsRouter } from "./routes/social-projects.js";
 import { socialMessageMetaRouter } from "./routes/social-message-meta.js";
@@ -44,6 +45,8 @@ app.use(optionalAuth);
 
 app.get("/health", (_req, res) => res.json({ ok: true, service: "nerdding-backend", mode: env.DATABASE_URL ? "postgres" : "memory-preview" }));
 app.use("/api/v1/feed", feedRouter);
+// This route intentionally comes before the older feed router so authenticated social pages always use the full feed representation.
+app.use("/api/v1/social", socialFeedViewRouter);
 app.use("/api/v1/social", socialFeedRouter);
 app.use("/api/v1/social", socialProjectsRouter);
 app.use("/api/v1/social", socialMessageMetaRouter);
