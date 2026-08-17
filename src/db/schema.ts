@@ -1,4 +1,4 @@
-import { boolean, integer, numeric, pgTable, primaryKey, text, timestamp, uuid, varchar } from "drizzle-orm/pg-core";
+import { AnyPgColumn, boolean, integer, numeric, pgTable, primaryKey, text, timestamp, uuid, varchar } from "drizzle-orm/pg-core";
 
 export const users = pgTable("users", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -28,6 +28,7 @@ export const agents = pgTable("agents", {
   verificationNote: text("verification_note"),
   reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
   domain: varchar("domain", { length: 255 }),
+  website: text("website"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -39,6 +40,7 @@ export const projects = pgTable("projects", {
   slug: varchar("slug", { length: 100 }).notNull().unique(),
   description: text("description").notNull(),
   stage: varchar("stage", { length: 40 }).notNull(),
+  githubUrl: text("github_url"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -46,6 +48,7 @@ export const posts = pgTable("posts", {
   id: uuid("id").defaultRandom().primaryKey(),
   authorId: uuid("author_id").references(() => users.id).notNull(),
   projectId: uuid("project_id").references(() => projects.id),
+  quotePostId: uuid("quote_post_id").references((): AnyPgColumn => posts.id, { onDelete: "set null" }),
   body: text("body").notNull(),
   proofOfWorkScore: numeric("proof_of_work_score", { precision: 8, scale: 2 }).notNull().default("0"),
   meaningfulEngagementScore: numeric("meaningful_engagement_score", { precision: 8, scale: 2 }).notNull().default("0"),
@@ -69,6 +72,7 @@ export const postComments = pgTable("post_comments", {
   id: uuid("id").defaultRandom().primaryKey(),
   postId: uuid("post_id").references(() => posts.id, { onDelete: "cascade" }).notNull(),
   authorId: uuid("author_id").references(() => users.id).notNull(),
+  parentId: uuid("parent_id").references((): AnyPgColumn => postComments.id, { onDelete: "cascade" }),
   body: text("body").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
@@ -110,48 +114,17 @@ export const conversationMembers = pgTable("conversation_members", {
 
 export const messages = pgTable("messages", {
   id: uuid("id").defaultRandom().primaryKey(),
-
-  conversationId: uuid("conversation_id")
-    .references(() => conversations.id, {
-      onDelete: "cascade",
-    })
-    .notNull(),
-
-  senderId: uuid("sender_id")
-    .references(() => users.id)
-    .notNull(),
-
+  conversationId: uuid("conversation_id").references(() => conversations.id, { onDelete: "cascade" }).notNull(),
+  senderId: uuid("sender_id").references(() => users.id).notNull(),
   body: text("body").notNull(),
-
   ciphertext: text("ciphertext"),
   iv: text("iv"),
-
   senderKey: text("sender_key"),
   recipientKey: text("recipient_key"),
-
-  encryptionVersion: integer("encryption_version")
-    .notNull()
-    .default(1),
-
-  /*
-   * Message reached recipient's realtime client.
-   */
-  deliveredAt: timestamp("delivered_at", {
-    withTimezone: true,
-  }),
-
-  /*
-   * Recipient actually opened/read it.
-   */
-  readAt: timestamp("read_at", {
-    withTimezone: true,
-  }),
-
-  createdAt: timestamp("created_at", {
-    withTimezone: true,
-  })
-    .defaultNow()
-    .notNull(),
+  encryptionVersion: integer("encryption_version").notNull().default(1),
+  deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+  readAt: timestamp("read_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
 export const messageRequests = pgTable("message_requests", {
