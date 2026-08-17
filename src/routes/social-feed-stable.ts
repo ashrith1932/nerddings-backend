@@ -14,7 +14,6 @@ function safeHours(value: string) { return Math.max(0.05, (Date.now() - new Date
 function normalizeTag(tag: string) { return tag.trim().replace(/^#/, "").toLowerCase().slice(0, 64); }
 function score(row: Row, tagVelocity: Map<string, number>) {
   const ageHours = safeHours(row.created_at);
-  // Long-tail freshness: older high-quality posts can resurface instead of being discarded after one day.
   const freshness = 1 / Math.sqrt(1 + ageHours / 72);
   const engagementRaw = Number(row.likes) + Number(row.comments) * 2 + Number(row.reposts) * 2.5 + Number(row.saves);
   const engagementVelocity = clamp(Math.log1p(engagementRaw) / 7) * (1 / Math.sqrt(1 + ageHours / 24));
@@ -72,9 +71,20 @@ async function loadPosts(viewerId?: string, mode: "for-you" | "network" = "for-y
   const tagVelocity = new Map<string, number>();
   for (const row of resultRows) {
     const engagement = Math.log1p(Number(row.likes) + Number(row.comments) * 2 + Number(row.reposts) * 2.5 + Number(row.saves)) / 7;
-    for (const tag of (Array.isArray(row.hashtags) ? row.hashtags : [])) tagVelocity.set(String(tag), Math.max(tagVelocity.get(String(tag)) ?? 0, clamp(engagement));
+    const hashtags = Array.isArray(row.hashtags) ? row.hashtags : [];
+    for (const tag of hashtags) {
+      const previous = tagVelocity.get(String(tag)) ?? 0;
+      tagVelocity.set(String(tag), Math.max(previous, clamp(engagement)));
+    }
   }
-  return resultRows.map(row => ({ ...row, mode, tag_affinity: (Array.isArray(row.hashtags) ? row.hashtags : []).reduce((sum: number, tag: string) => sum + (affinity.get(String(tag)) ?? 0), 0), score: score(row, tagVelocity) })).sort((a,b) => Number(b.score) - Number(a.score)).slice(0,50);
+  return resultRows
+    .map(row => {
+      const hashtags = Array.isArray(row.hashtags) ? row.hashtags : [];
+      const tagAffinity = hashtags.reduce((sum: number, tag: string) => sum + (affinity.get(String(tag)) ?? 0), 0);
+      return { ...row, mode, tag_affinity: tagAffinity, score: score({ ...row, mode, tag_affinity: tagAffinity }, tagVelocity) };
+    })
+    .sort((a, b) => Number(b.score) - Number(a.score))
+    .slice(0, 50);
 }
 
 function serialize(row: Row) {
@@ -174,9 +184,9 @@ socialFeedStableRouter.get("/explore/live", async (_req,res) => {
       const engagement = Number(row.likes)+Number(row.comments)*2+Number(row.reposts)*2;
       for (const topic of tags) { const current=topics.get(topic) ?? {topic,posts:0,engagement:0}; current.posts+=1; current.engagement+=engagement; topics.set(topic,current); }
     }
-    return res.json({ data:{ stories:result.slice(0,30).map(serialize), topics:[...topics.values()].sort((a,b)=>b.engagement-a.engagement).slice(0,12)] }, algorithm:"velocity-recency-quality-v4" });
+    return res.json({ data: { stories: result.slice(0, 30).map(serialize), topics: [...topics.values()].sort((a,b) => b.engagement - a.engagement).slice(0, 12) }, algorithm: "velocity-recency-quality-v4" });
   } catch (error) {
     console.error("[SocialFeedStable] Failed to load explore:", error);
-    return res.status(500).json({ error:"Unable to load explore" });
+    return res.status(500).json({ error: "Unable to load explore" });
   }
 });
