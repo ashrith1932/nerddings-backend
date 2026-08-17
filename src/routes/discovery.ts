@@ -1,10 +1,9 @@
 import { Router } from "express";
-import { sql } from "drizzle-orm";
+import { sql, desc } from "drizzle-orm";
 import { exploreStories } from "../lib/store.js";
 import { rankExplore, scoreTopChart } from "../lib/ranking.js";
 import { db } from "../db/client.js";
 import { users } from "../db/schema.js";
-import { desc } from "drizzle-orm";
 
 export const discoveryRouter = Router();
 
@@ -23,33 +22,21 @@ discoveryRouter.get("/charts", async (_req, res) => {
   }
 });
 
+async function rows(query: any): Promise<Record<string, any>[]> {
+  const result = await db!.execute(query) as unknown as { rows: Record<string, any>[] } | Record<string, any>[];
+  return Array.isArray(result) ? result : result.rows;
+}
+
 discoveryRouter.get("/search", async (req, res) => {
   const query = typeof req.query.q === "string" ? req.query.q.trim() : "";
-  if (!query) return res.json({ data: { users: [], projects: [], posts: [] } });
-  if (!db) return res.json({ data: { users: [], projects: [], posts: [] } });
+  if (!query || !db) return res.json({ data: { users: [], projects: [], posts: [] } });
   try {
     const pattern = `%${query}%`;
-    const userRows = await db.execute(sql`
-      SELECT id,name,username,avatar_url,account_type
-      FROM users
-      WHERE name ILIKE ${pattern} OR username ILIKE ${pattern}
-      ORDER BY trust_score DESC, created_at DESC
-      LIMIT 20
-    `) as unknown as Array<Record<string, any>>;
-    const projectRows = await db.execute(sql`
-      SELECT id,name,slug,description,stage
-      FROM projects
-      WHERE name ILIKE ${pattern} OR slug ILIKE ${pattern} OR description ILIKE ${pattern}
-      ORDER BY created_at DESC
-      LIMIT 20
-    `) as unknown as Array<Record<string, any>>;
-    const postRows = await db.execute(sql`
-      SELECT p.id,p.body,p.created_at,u.name,u.username,u.avatar_url
-      FROM posts p JOIN users u ON u.id=p.author_id
-      WHERE p.body ILIKE ${pattern}
-      ORDER BY p.created_at DESC
-      LIMIT 20
-    `) as unknown as Array<Record<string, any>>;
+    const [userRows, projectRows, postRows] = await Promise.all([
+      rows(sql`SELECT id,name,username,avatar_url,account_type FROM users WHERE name ILIKE ${pattern} OR username ILIKE ${pattern} ORDER BY trust_score DESC, created_at DESC LIMIT 20`),
+      rows(sql`SELECT id,name,slug,description,stage FROM projects WHERE name ILIKE ${pattern} OR slug ILIKE ${pattern} OR description ILIKE ${pattern} ORDER BY created_at DESC LIMIT 20`),
+      rows(sql`SELECT p.id,p.body,p.created_at,u.name,u.username,u.avatar_url FROM posts p JOIN users u ON u.id=p.author_id WHERE p.body ILIKE ${pattern} ORDER BY p.created_at DESC LIMIT 20`),
+    ]);
     return res.json({ data: {
       users: userRows.map((row) => ({ id: row.id, name: row.name, username: row.username, avatarUrl: row.avatar_url, accountType: row.account_type })),
       projects: projectRows.map((row) => ({ id: row.id, name: row.name, slug: row.slug, description: row.description, stage: row.stage })),
