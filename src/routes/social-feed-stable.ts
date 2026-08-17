@@ -39,6 +39,7 @@ async function loadPosts(viewerId?: string, mode: "for-you" | "network" = "for-y
       COUNT(DISTINCT pc.id)::int comments,
       COUNT(DISTINCT rr.user_id)::int reposts,
       COUNT(DISTINCT ps.user_id)::int saves,
+      COALESCE((SELECT COUNT(*)::int FROM post_views pv WHERE pv.post_id=p.id),0) views,
       COALESCE(BOOL_OR(vf.follower_id IS NOT NULL),false) is_following,
       EXISTS(SELECT 1 FROM post_likes vl WHERE vl.post_id=p.id AND vl.user_id=${viewerId ?? null}) viewer_liked,
       EXISTS(SELECT 1 FROM post_saves vs WHERE vs.post_id=p.id AND vs.user_id=${viewerId ?? null}) viewer_saved,
@@ -93,7 +94,7 @@ function serialize(row: Row) {
     author: { id: row.author_id, name: row.name, username: row.username, avatarUrl: row.avatar_url, accountType: row.account_type, bio: row.bio, location: row.location },
     text: row.body, createdAt: row.created_at,
     score: Math.round(Number(row.score ?? 0) * 1000) / 1000,
-    likes: Number(row.likes ?? 0), comments: Number(row.comments ?? 0), reposts: Number(row.reposts ?? 0), saves: Number(row.saves ?? 0),
+    likes: Number(row.likes ?? 0), comments: Number(row.comments ?? 0), reposts: Number(row.reposts ?? 0), saves: Number(row.saves ?? 0), views: Number(row.views ?? 0),
     liked: Boolean(row.viewer_liked), saved: Boolean(row.viewer_saved), reposted: Boolean(row.viewer_reposted), following: Boolean(row.is_following),
     linkUrl: row.link_url ?? null, media: row.media ?? [], hashtags: Array.isArray(row.hashtags) ? row.hashtags : [],
     project: row.project_id ? { id: row.project_id, name: row.project_name, slug: row.project_slug, stage: row.project_stage, description: row.project_description, githubUrl: row.github_url ?? null } : null,
@@ -162,6 +163,7 @@ socialFeedStableRouter.get("/hashtags/:tag", async (req,res) => {
         (SELECT COUNT(*)::int FROM post_comments x WHERE x.post_id=p.id) comments,
         (SELECT COUNT(*)::int FROM post_reposts x WHERE x.post_id=p.id) reposts,
         (SELECT COUNT(*)::int FROM post_saves x WHERE x.post_id=p.id) saves,
+        (SELECT COUNT(*)::int FROM post_views x WHERE x.post_id=p.id) views,
         COALESCE((SELECT json_agg(json_build_object('publicUrl',pm.public_url,'mimeType',pm.mime_type) ORDER BY pm.sort_order) FROM post_media pm WHERE pm.post_id=p.id),'[]'::json) media,
         COALESCE((SELECT json_agg(h.tag ORDER BY h.tag) FROM post_hashtags ph JOIN hashtags h ON h.id=ph.hashtag_id WHERE ph.post_id=p.id),'[]'::json) hashtags
       FROM posts p JOIN post_hashtags wanted ON wanted.post_id=p.id JOIN hashtags wanted_tag ON wanted_tag.id=wanted.hashtag_id AND wanted_tag.tag=${tag}
