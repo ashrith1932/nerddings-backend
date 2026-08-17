@@ -12,6 +12,7 @@ import { socialProjectsRouter } from "./routes/social-projects.js";
 import { socialMessageMetaRouter } from "./routes/social-message-meta.js";
 import { projectDetailsRouter } from "./routes/project-details.js";
 import { agentDetailsRouter } from "./routes/agent-details.js";
+import { agentVerificationRouter } from "./routes/agent-verification-v2.js";
 import { fundraisingRouter } from "./routes/fundraising.js";
 import { authRouter } from "./routes/auth.js";
 import { socialRouter } from "./routes/social.js";
@@ -46,7 +47,6 @@ app.use(optionalAuth);
 
 app.get("/health", (_req, res) => res.json({ ok: true, service: "nerdding-backend", mode: env.DATABASE_URL ? "postgres" : "memory-preview" }));
 app.use("/api/v1/feed", feedRouter);
-// Canonical social representations must be mounted before legacy social endpoints.
 app.use("/api/v1/social", socialFeedViewRouter);
 app.use("/api/v1/social", socialProfileViewRouter);
 app.use("/api/v1/social", socialFeedRouter);
@@ -54,6 +54,7 @@ app.use("/api/v1/social", socialProjectsRouter);
 app.use("/api/v1/social", socialMessageMetaRouter);
 app.use("/api/v1", projectDetailsRouter);
 app.use("/api/v1", agentDetailsRouter);
+app.use("/api/v1/agent-verification", agentVerificationRouter);
 app.use("/api/v1", discoveryRouter);
 app.use("/api/v1/fundraisings", fundraisingRouter);
 app.use("/api/v1/auth", authRouter);
