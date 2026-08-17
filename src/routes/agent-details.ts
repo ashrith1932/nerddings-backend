@@ -10,6 +10,5 @@ agentDetailsRouter.get("/agents/:slug", async (req,res)=>{
  const agent=(rows as unknown as Record<string,any>[])[0];
  if(!agent)return res.status(404).json({error:"Organization not found"});
  const projects=await db.execute(sql`SELECT id,name,slug,description,stage,github_url,created_at FROM projects WHERE agent_id=${agent.id} ORDER BY created_at DESC`);
- const followers=await db.execute(sql`SELECT COUNT(*)::int count FROM follows WHERE following_id=${agent.id}`);
- return res.json({data:{agent,projects,followers:Number((followers as any)[0]?.count??0),posts:0}});
+ return res.json({data:{agent,projects,followers:0,posts:0}});
 });
