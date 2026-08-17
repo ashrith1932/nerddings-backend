@@ -10,6 +10,14 @@ const envSchema = z.object({
   SUPABASE_URL: z.string().url().optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(20).optional(),
   STORAGE_BUCKET: z.string().default("nerdding-media"),
+  VERIFICATION_ADMIN_EMAILS: z.string().default(""),
 });
 
 export const env = envSchema.parse(process.env);
+
+export const verificationAdminEmails = new Set(
+  env.VERIFICATION_ADMIN_EMAILS
+    .split(",")
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean),
+);

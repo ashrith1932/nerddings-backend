@@ -8,10 +8,12 @@ import { feedRouter } from "./routes/feed.js";
 import { socialFeedViewRouter } from "./routes/social-feed-view.js";
 import { socialProfileViewRouter } from "./routes/social-profile-view.js";
 import { socialFeedRouter } from "./routes/social-feed.js";
+import { socialPostDetailRouter } from "./routes/social-post-detail.js";
 import { socialProjectsRouter } from "./routes/social-projects.js";
 import { socialMessageMetaRouter } from "./routes/social-message-meta.js";
 import { projectDetailsRouter } from "./routes/project-details.js";
 import { agentDetailsRouter } from "./routes/agent-details.js";
+import { agentVerificationRouter } from "./routes/agent-verification-v2.js";
 import { fundraisingRouter } from "./routes/fundraising.js";
 import { authRouter } from "./routes/auth.js";
 import { socialRouter } from "./routes/social.js";
@@ -24,36 +26,22 @@ import { nerddingsRouter } from "./routes/nerddings.js";
 
 export const app = express();
 app.use(helmet());
-const allowedOrigins = new Set([
-  "https://thepeoplesrepellentparty.in",
-  "https://www.thepeoplesrepellentparty.in",
-  env.FRONTEND_ORIGIN,
-]);
-
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || allowedOrigins.has(origin)) return callback(null, true);
-    console.warn("[CORS] Blocked origin:", origin);
-    return callback(new Error("Not allowed by CORS"));
-  },
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-  optionsSuccessStatus: 204,
-}));
+const allowedOrigins = new Set(["https://thepeoplesrepellentparty.in", "https://www.thepeoplesrepellentparty.in", env.FRONTEND_ORIGIN]);
+app.use(cors({ origin: (origin, callback) => { if (!origin || allowedOrigins.has(origin)) return callback(null, true); console.warn("[CORS] Blocked origin:", origin); return callback(new Error("Not allowed by CORS")); }, credentials: true, methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], allowedHeaders: ["Content-Type", "Authorization"], optionsSuccessStatus: 204 }));
 app.use(express.json({ limit: "1mb" }));
 app.use(optionalAuth);
 
 app.get("/health", (_req, res) => res.json({ ok: true, service: "nerdding-backend", mode: env.DATABASE_URL ? "postgres" : "memory-preview" }));
 app.use("/api/v1/feed", feedRouter);
-// Canonical social representations must be mounted before legacy social endpoints.
 app.use("/api/v1/social", socialFeedViewRouter);
 app.use("/api/v1/social", socialProfileViewRouter);
+app.use("/api/v1/social", socialPostDetailRouter);
 app.use("/api/v1/social", socialFeedRouter);
 app.use("/api/v1/social", socialProjectsRouter);
 app.use("/api/v1/social", socialMessageMetaRouter);
 app.use("/api/v1", projectDetailsRouter);
 app.use("/api/v1", agentDetailsRouter);
+app.use("/api/v1/agent-verification", agentVerificationRouter);
 app.use("/api/v1", discoveryRouter);
 app.use("/api/v1/fundraisings", fundraisingRouter);
 app.use("/api/v1/auth", authRouter);
@@ -65,7 +53,4 @@ app.use("/api/v1/notifications", notificationsRouter);
 app.use("/api/v1/events", eventsRouter);
 app.use("/api/v1/nerddings", nerddingsRouter);
 
-app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error(err);
-  res.status(500).json({ error: "Internal server error" });
-});
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => { console.error(err); res.status(500).json({ error: "Internal server error" }); });
