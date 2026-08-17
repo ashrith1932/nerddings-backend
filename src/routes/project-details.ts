@@ -16,7 +16,9 @@ projectDetailsRouter.get("/projects/:slug", async (req, res) => {
   const row = (rows as unknown as Record<string,any>[])[0];
   if (!row) return res.status(404).json({ error: "Project not found" });
   const posts = await db.execute(sql`SELECT p.id,p.body,p.created_at FROM posts p WHERE p.project_id=${row.id} ORDER BY p.created_at DESC LIMIT 8`);
-  return res.json({ data: { id: row.id, name: row.name, slug: row.slug, description: row.description, stage: row.stage, githubUrl: row.github_url, createdAt: row.created_at, owner: { id: row.owner_id, name: row.owner_name, username: row.owner_username, avatarUrl: row.owner_avatar }, agent: row.agent_id ? { id: row.agent_id, name: row.agent_name, slug: row.agent_slug, domain: row.agent_domain, website: row.agent_website, verified: row.agent_verified } : null, posts } });
+  const contributors = await db.execute(sql`SELECT pc.user_id,pc.status,pc.created_at,u.name,u.username,u.avatar_url,u.account_type
+    FROM project_collaborators pc JOIN users u ON u.id=pc.user_id WHERE pc.project_id=${row.id} AND pc.status='accepted' ORDER BY pc.created_at ASC`);
+  return res.json({ data: { id: row.id, name: row.name, slug: row.slug, description: row.description, stage: row.stage, githubUrl: row.github_url, createdAt: row.created_at, owner: { id: row.owner_id, name: row.owner_name, username: row.owner_username, avatarUrl: row.owner_avatar }, agent: row.agent_id ? { id: row.agent_id, name: row.agent_name, slug: row.agent_slug, domain: row.agent_domain, website: row.agent_website, verified: row.agent_verified } : null, contributors, posts } });
 });
 
 projectDetailsRouter.patch("/projects/:slug", requireAuth, async (req,res)=>{
