@@ -92,6 +92,12 @@ socialPostDetailRouter.post("/posts/:postId/comments", requireAuth, async (req, 
   try {
     const exists = await executeRows(sql`SELECT id FROM posts WHERE id=${req.params.postId} LIMIT 1`);
     if (!exists[0]) return res.status(404).json({ error: "Post not found" });
+
+    if (parsed.data.parentId) {
+      const parent = await executeRows(sql`SELECT id FROM post_comments WHERE id=${parsed.data.parentId} AND post_id=${req.params.postId} LIMIT 1`);
+      if (!parent[0]) return res.status(400).json({ error: "That reply target does not belong to this post." });
+    }
+
     const [row] = await executeRows(sql`
       INSERT INTO post_comments (id,post_id,author_id,parent_id,body)
       VALUES (${randomUUID()},${req.params.postId},${req.auth!.subjectId},${parsed.data.parentId ?? null},${parsed.data.body})
