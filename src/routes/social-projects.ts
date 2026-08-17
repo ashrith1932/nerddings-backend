@@ -24,6 +24,12 @@ async function uniqueSlug(base: string) {
   return `${clean}-${i}`;
 }
 
+socialProjectsRouter.get("/agents", async (_req, res) => {
+  if (!db) return res.json({ data: [] });
+  const rows = await db.execute(sql`SELECT id,name,slug,type,verified,domain,website FROM agents ORDER BY verified DESC, name ASC LIMIT 100`) as unknown as Row[];
+  res.json({ data: rows });
+});
+
 socialProjectsRouter.get("/projects/:slug/members", async (req, res) => {
   if (!db) return res.json({ data: [] });
   const rows = await db.execute(sql`SELECT pc.user_id, pc.status, pc.created_at, u.name, u.username, u.avatar_url, u.account_type
@@ -70,7 +76,7 @@ socialProjectsRouter.post("/projects/:slug/invitations", requireAuth, async (req
   if (!db) return res.status(503).json({ error: "Database unavailable" });
   const parsed = z.object({ userId: z.string().uuid() }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "A valid user is required." });
-  const projectRows = await db.execute(sql`SELECT id, owner_id, name FROM projects WHERE lower(slug)=lower(${req.params.slug}) LIMIT 1`) as unknown as Row[];
+  const projectRows = await db.execute(sql`SELECT id, owner_id FROM projects WHERE lower(slug)=lower(${req.params.slug}) LIMIT 1`) as unknown as Row[];
   const project = projectRows[0];
   if (!project) return res.status(404).json({ error: "Project not found." });
   if (String(project.owner_id) !== String(req.auth!.subjectId)) return res.status(403).json({ error: "Only the project creator can invite contributors." });
