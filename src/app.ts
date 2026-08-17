@@ -5,6 +5,7 @@ import { env } from "./config/env.js";
 import { optionalAuth } from "./middleware/auth.js";
 import { discoveryRouter } from "./routes/discovery.js";
 import { feedRouter } from "./routes/feed.js";
+import { socialFeedHotfixRouter } from "./routes/social-feed-hotfix.js";
 import { socialFeedViewRouter } from "./routes/social-feed-view.js";
 import { socialProfileViewRouter } from "./routes/social-profile-view.js";
 import { socialProfileLiveRouter } from "./routes/social-profile-live.js";
@@ -27,13 +28,35 @@ import { nerddingsRouter } from "./routes/nerddings.js";
 
 export const app = express();
 app.use(helmet());
-const allowedOrigins = new Set(["https://thepeoplesrepellentparty.in", "https://www.thepeoplesrepellentparty.in", env.FRONTEND_ORIGIN]);
-app.use(cors({ origin: (origin, callback) => { if (!origin || allowedOrigins.has(origin)) return callback(null, true); console.warn("[CORS] Blocked origin:", origin); return callback(new Error("Not allowed by CORS")); }, credentials: true, methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], allowedHeaders: ["Content-Type", "Authorization"], optionsSuccessStatus: 204 }));
+
+const allowedOrigins = new Set([
+  "https://thepeoplesrepellentparty.in",
+  "https://www.thepeoplesrepellentparty.in",
+  env.FRONTEND_ORIGIN,
+]);
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.has(origin)) return callback(null, true);
+    console.warn("[CORS] Blocked origin:", origin);
+    return callback(new Error("Not allowed by CORS"));
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  optionsSuccessStatus: 204,
+}));
+
 app.use(express.json({ limit: "1mb" }));
 app.use(optionalAuth);
 
 app.get("/health", (_req, res) => res.json({ ok: true, service: "nerdding-backend", mode: env.DATABASE_URL ? "postgres" : "memory-preview" }));
 app.use("/api/v1/feed", feedRouter);
+
+// Keep the corrected public feed routes ahead of the legacy social feed routers.
+// The legacy implementation references the vf alias even when no viewer exists,
+// which causes PostgreSQL 42P01 and can terminate the Express 4 process.
+app.use("/api/v1/social", socialFeedHotfixRouter);
 app.use("/api/v1/social", socialFeedViewRouter);
 app.use("/api/v1/social", socialProfileViewRouter);
 app.use("/api/v1/social", socialProfileLiveRouter);
@@ -55,4 +78,7 @@ app.use("/api/v1/notifications", notificationsRouter);
 app.use("/api/v1/events", eventsRouter);
 app.use("/api/v1/nerddings", nerddingsRouter);
 
-app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => { console.error(err); res.status(500).json({ error: "Internal server error" }); });
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error(err);
+  res.status(500).json({ error: "Internal server error" });
+});
