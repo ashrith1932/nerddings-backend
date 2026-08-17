@@ -7,6 +7,7 @@ import { discoveryRouter } from "./routes/discovery.js";
 import { feedRouter } from "./routes/feed.js";
 import { socialFeedRouter } from "./routes/social-feed.js";
 import { socialProjectsRouter } from "./routes/social-projects.js";
+import { socialMessageMetaRouter } from "./routes/social-message-meta.js";
 import { projectDetailsRouter } from "./routes/project-details.js";
 import { agentDetailsRouter } from "./routes/agent-details.js";
 import { fundraisingRouter } from "./routes/fundraising.js";
@@ -45,6 +46,7 @@ app.get("/health", (_req, res) => res.json({ ok: true, service: "nerdding-backen
 app.use("/api/v1/feed", feedRouter);
 app.use("/api/v1/social", socialFeedRouter);
 app.use("/api/v1/social", socialProjectsRouter);
+app.use("/api/v1/social", socialMessageMetaRouter);
 app.use("/api/v1", projectDetailsRouter);
 app.use("/api/v1", agentDetailsRouter);
 app.use("/api/v1", discoveryRouter);
