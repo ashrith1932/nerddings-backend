@@ -9,13 +9,14 @@ import { socialFeedHotfixRouter } from "./routes/social-feed-hotfix.js";
 import { socialFeedViewRouter } from "./routes/social-feed-view.js";
 import { socialProfileViewRouter } from "./routes/social-profile-view.js";
 import { socialProfileLiveRouter } from "./routes/social-profile-live.js";
-import { socialFeedRouter } from "./routes/social-feed.js";
 import { socialPostDetailRouter } from "./routes/social-post-detail.js";
 import { socialProjectsRouter } from "./routes/social-projects.js";
 import { socialMessageMetaRouter } from "./routes/social-message-meta.js";
+import { socialPostCreateRouter } from "./routes/social-post-create.js";
 import { projectDetailsRouter } from "./routes/project-details.js";
 import { agentDetailsRouter } from "./routes/agent-details.js";
 import { agentVerificationRouter } from "./routes/agent-verification-v2.js";
+import { agentAffiliationsRouter } from "./routes/agent-affiliations.js";
 import { fundraisingRouter } from "./routes/fundraising.js";
 import { authRouter } from "./routes/auth.js";
 import { socialRouter } from "./routes/social.js";
@@ -25,60 +26,10 @@ import { settingsRouter } from "./routes/settings.js";
 import { notificationsRouter } from "./routes/notifications.js";
 import { eventsRouter } from "./routes/events.js";
 import { nerddingsRouter } from "./routes/nerddings.js";
-
-export const app = express();
-app.use(helmet());
-
-const allowedOrigins = new Set([
-  "https://thepeoplesrepellentparty.in",
-  "https://www.thepeoplesrepellentparty.in",
-  env.FRONTEND_ORIGIN,
-]);
-
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || allowedOrigins.has(origin)) return callback(null, true);
-    console.warn("[CORS] Blocked origin:", origin);
-    return callback(new Error("Not allowed by CORS"));
-  },
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-  optionsSuccessStatus: 204,
-}));
-
-app.use(express.json({ limit: "1mb" }));
-app.use(optionalAuth);
-
-app.get("/health", (_req, res) => res.json({ ok: true, service: "nerdding-backend", mode: env.DATABASE_URL ? "postgres" : "memory-preview" }));
-app.use("/api/v1/feed", feedRouter);
-
-// Keep the corrected public feed routes ahead of the legacy social feed routers.
-// The legacy implementation references the vf alias even when no viewer exists,
-// which causes PostgreSQL 42P01 and can terminate the Express 4 process.
-app.use("/api/v1/social", socialFeedHotfixRouter);
-app.use("/api/v1/social", socialFeedViewRouter);
-app.use("/api/v1/social", socialProfileViewRouter);
-app.use("/api/v1/social", socialProfileLiveRouter);
-app.use("/api/v1/social", socialPostDetailRouter);
-app.use("/api/v1/social", socialFeedRouter);
-app.use("/api/v1/social", socialProjectsRouter);
-app.use("/api/v1/social", socialMessageMetaRouter);
-app.use("/api/v1", projectDetailsRouter);
-app.use("/api/v1", agentDetailsRouter);
-app.use("/api/v1/agent-verification", agentVerificationRouter);
-app.use("/api/v1", discoveryRouter);
-app.use("/api/v1/fundraisings", fundraisingRouter);
-app.use("/api/v1/auth", authRouter);
-app.use("/api/v1", socialRouter);
-app.use("/api/v1/uploads", uploadsRouter);
-app.use("/api/v1/messages", messagesRouter);
-app.use("/api/v1/settings", settingsRouter);
-app.use("/api/v1/notifications", notificationsRouter);
-app.use("/api/v1/events", eventsRouter);
-app.use("/api/v1/nerddings", nerddingsRouter);
-
-app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error(err);
-  res.status(500).json({ error: "Internal server error" });
-});
+export const app=express();app.use(helmet());
+const allowedOrigins=new Set(["https://thepeoplesrepellentparty.in","https://www.thepeoplesrepellentparty.in",env.FRONTEND_ORIGIN]);
+app.use(cors({origin:(origin,callback)=>{if(!origin||allowedOrigins.has(origin))return callback(null,true);console.warn("[CORS] Blocked origin:",origin);return callback(new Error("Not allowed by CORS"))},credentials:true,methods:["GET","POST","PUT","PATCH","DELETE","OPTIONS"],allowedHeaders:["Content-Type","Authorization"],optionsSuccessStatus:204}));
+app.use(express.json({limit:"1mb"}));app.use(optionalAuth);app.get("/health",(_req,res)=>res.json({ok:true,service:"nerdding-backend",mode:env.DATABASE_URL?"postgres":"memory-preview"}));app.use("/api/v1/feed",feedRouter);
+// The hotfix feed is intentionally first. It always declares the viewer join, including anonymous requests, so PostgreSQL cannot raise 42P01 for the vf alias.
+app.use("/api/v1/social",socialFeedHotfixRouter);app.use("/api/v1/social",socialFeedViewRouter);app.use("/api/v1/social",socialProfileViewRouter);app.use("/api/v1/social",socialProfileLiveRouter);app.use("/api/v1/social",socialPostDetailRouter);app.use("/api/v1/social",socialProjectsRouter);app.use("/api/v1/social",socialMessageMetaRouter);app.use("/api/v1/social",socialPostCreateRouter);app.use("/api/v1",projectDetailsRouter);app.use("/api/v1",agentDetailsRouter);app.use("/api/v1/agent-verification",agentVerificationRouter);app.use("/api/v1",agentAffiliationsRouter);app.use("/api/v1",discoveryRouter);app.use("/api/v1/fundraisings",fundraisingRouter);app.use("/api/v1/auth",authRouter);app.use("/api/v1",socialRouter);app.use("/api/v1/uploads",uploadsRouter);app.use("/api/v1/messages",messagesRouter);app.use("/api/v1/settings",settingsRouter);app.use("/api/v1/notifications",notificationsRouter);app.use("/api/v1/events",eventsRouter);app.use("/api/v1/nerddings",nerddingsRouter);
+app.use((err:unknown,_req:express.Request,res:express.Response,_next:express.NextFunction)=>{console.error(err);res.status(500).json({error:"Internal server error"})});
