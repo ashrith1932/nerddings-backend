@@ -33,8 +33,6 @@ socialRouter.post("/posts", requireAuth, async (req, res) => {
     body: z.string().min(1).max(5000),
     topic: z.string().max(80).default("build"),
     projectSlug: z.string().max(100).optional(),
-    // Kept in the API contract for forward compatibility. The current canonical
-    // posts table has no link_url column, so it is not persisted yet.
     linkUrl: z.string().url().max(2000).nullable().optional(),
     media: z.array(z.object({ path: z.string(), mimeType: z.string(), publicUrl: z.string().url().optional() })).max(10).default([]),
   }).safeParse(req.body);
@@ -44,8 +42,16 @@ socialRouter.post("/posts", requireAuth, async (req, res) => {
   if (db) {
     let projectId: string | null = null;
     if (parsed.data.projectSlug) {
-      const projectRows = await db.execute(sql`SELECT p.id FROM projects p LEFT JOIN project_collaborators pc ON pc.project_id=p.id AND pc.user_id=${req.auth!.subjectId} AND pc.status='accepted' WHERE lower(p.slug)=lower(${parsed.data.projectSlug}) AND (p.owner_id=${req.auth!.subjectId} OR pc.user_id IS NOT NULL) LIMIT 1`) as unknown as Array<{ id: string }>;
-      if (!projectRows[0]) return res.status(403).json({ error: "You can only attach projects you own or contribute to." });
+      // projects currently have owner_id only; collaborator support belongs in a
+      // future migration and must not be queried until its table is introduced.
+      const projectRows = await db.execute(sql`
+        SELECT id
+        FROM projects
+        WHERE lower(slug)=lower(${parsed.data.projectSlug})
+          AND owner_id=${req.auth!.subjectId}
+        LIMIT 1
+      `) as unknown as Array<{ id: string }>;
+      if (!projectRows[0]) return res.status(403).json({ error: "You can only attach projects you own." });
       projectId = projectRows[0].id;
     }
 
@@ -67,16 +73,14 @@ socialRouter.post("/posts", requireAuth, async (req, res) => {
       })));
     }
 
-    return res.status(201).json({
-      data: {
-        id: created?.id ?? id,
-        body: parsed.data.body,
-        projectId,
-        projectSlug: parsed.data.projectSlug ?? null,
-        linkUrl: null,
-        media: parsed.data.media,
-      },
-    });
+    return res.status(201).json({ data: {
+      id: created?.id ?? id,
+      body: parsed.data.body,
+      projectId,
+      projectSlug: parsed.data.projectSlug ?? null,
+      linkUrl: null,
+      media: parsed.data.media,
+    } });
   }
 
   feedPosts.unshift({ id, authorId: req.auth!.subjectId, text: parsed.data.body, topic: parsed.data.topic, createdAt: new Date().toISOString(), projectSlug: parsed.data.projectSlug, signals: { relevance: 0.7, freshness: 1, proofOfWork: parsed.data.media.length ? 0.7 : 0.25, meaningfulEngagement: 0, trust: 0.5, projectActivity: 0.4, relationship: 0.5, spamPenalty: 0 } });
@@ -124,7 +128,7 @@ socialRouter.post("/users/:userId/follow", requireAuth, async (req, res) => {
     const [existing] = await db.select().from(followsTable).where(where).limit(1);
     if (existing) await db.delete(followsTable).where(where);
     else await db.insert(followsTable).values({ followerId: req.auth!.subjectId, followingId: userId });
-    if (!existing && db) await db.insert(notifications).values({ recipientId: userId, actorId: req.auth!.subjectId, kind: "follow", entityId: userId, text: "started following you" });
+    if (!existing) await db.insert(notifications).values({ recipientId: userId, actorId: req.auth!.subjectId, kind: "follow", entityId: userId, text: "started following you" });
     return res.json({ data: { active: !existing, followingId: userId } });
   }
   const set = following.get(req.auth!.subjectId) ?? new Set<string>();
@@ -139,5 +143,5 @@ socialRouter.get("/users/:userId/following", requireAuth, async (req, res) => {
     const [existing] = await db.select().from(followsTable).where(and(eq(followsTable.followerId, req.auth!.subjectId), eq(followsTable.followingId, userId))).limit(1);
     return res.json({ data: { active: Boolean(existing) } });
   }
-  return res.json({ data: { active: following.get(req.auth!.subjectId)?.has(req.auth!.subjectId) ?? false } });
+  return res.json({ data: { active: following.get(req.auth!.subjectId)?.has(userId) ?? false } });
 });
