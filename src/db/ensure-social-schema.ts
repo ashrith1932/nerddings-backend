@@ -5,6 +5,7 @@ export async function ensureSocialSchema() {
   if (!db) return;
   await db.execute(sql`ALTER TABLE post_comments ADD COLUMN IF NOT EXISTS parent_id uuid REFERENCES post_comments(id) ON DELETE CASCADE`);
   await db.execute(sql`ALTER TABLE posts ADD COLUMN IF NOT EXISTS quote_post_id uuid REFERENCES posts(id) ON DELETE SET NULL`);
+  await db.execute(sql`ALTER TABLE posts ADD COLUMN IF NOT EXISTS link_url text`);
   await db.execute(sql`ALTER TABLE projects ADD COLUMN IF NOT EXISTS github_url text`);
   await db.execute(sql`ALTER TABLE agents ADD COLUMN IF NOT EXISTS website text`);
   await db.execute(sql`CREATE TABLE IF NOT EXISTS project_collaborators (project_id uuid NOT NULL REFERENCES projects(id) ON DELETE CASCADE, user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE, status varchar(20) NOT NULL DEFAULT 'pending', created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(project_id,user_id))`);
