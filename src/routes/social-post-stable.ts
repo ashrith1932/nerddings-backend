@@ -8,6 +8,7 @@ import { db } from "../db/client.js";
 type Row=Record<string,any>;
 export const socialPostStableRouter=Router();
 async function rows(query:any):Promise<Row[]>{const result=await db!.execute(query) as unknown as Row[]|{rows:Row[]};return Array.isArray(result)?result:result.rows;}
+function extractHashtags(text:string){const tags=new Set<string>();const regex=/(?:^|\s)#([\p{L}\p{N}_]{1,64})/gu;for(const match of text.matchAll(regex))tags.add(match[1].toLowerCase());return [...tags];}
 
 socialPostStableRouter.get("/post-options",requireAuth,async(req,res)=>{
   if(!db)return res.json({data:{projects:[],agents:[]}});
@@ -26,7 +27,12 @@ socialPostStableRouter.post("/posts",requireAuth,async(req,res)=>{
     if(parsed.data.agentSlug){const a=(await rows(sql`SELECT id FROM agents WHERE lower(slug)=lower(${parsed.data.agentSlug}) AND verified=true AND verification_status='approved' LIMIT 1`))[0];if(!a)return res.status(404).json({error:"Verified Agent not found."});agentId=String(a.id);}
     const id=randomUUID();
     const created=(await rows(sql`INSERT INTO posts(id,author_id,project_id,agent_id,body,link_url,proof_of_work_score) VALUES (${id},${req.auth!.subjectId},${projectId},${agentId},${parsed.data.body},${parsed.data.linkUrl??null},${parsed.data.media.length?'0.7':'0'}) RETURNING id,body,project_id,agent_id,link_url,created_at`))[0];
+    const hashtags=extractHashtags(parsed.data.body);
+    for(const tag of hashtags){
+      const hashtag=(await rows(sql`INSERT INTO hashtags(tag) VALUES (${tag}) ON CONFLICT(tag) DO UPDATE SET tag=EXCLUDED.tag RETURNING id,tag`))[0];
+      if(hashtag) await db.execute(sql`INSERT INTO post_hashtags(post_id,hashtag_id) VALUES (${id},${hashtag.id}) ON CONFLICT DO NOTHING`);
+    }
     if(parsed.data.media.length){for(const [index,media] of parsed.data.media.entries())await db.execute(sql`INSERT INTO post_media(post_id,storage_path,public_url,mime_type,sort_order) VALUES (${id},${media.path},${media.publicUrl??null},${media.mimeType},${index})`);}
-    return res.status(201).json({data:{id:created.id,body:created.body,projectId:created.project_id,agentId:created.agent_id,projectSlug:parsed.data.projectSlug??null,agentSlug:parsed.data.agentSlug??null,linkUrl:created.link_url,media:parsed.data.media}});
+    return res.status(201).json({data:{id:created.id,body:created.body,projectId:created.project_id,agentId:created.agent_id,projectSlug:parsed.data.projectSlug??null,agentSlug:parsed.data.agentSlug??null,linkUrl:created.link_url,hashtags,media:parsed.data.media}});
   }catch(error){console.error("[SocialPostStable] Failed:",error);return res.status(500).json({error:"Unable to publish this post right now."});}
 });
