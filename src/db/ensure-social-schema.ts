@@ -113,9 +113,6 @@ export async function ensureSocialSchema() {
     )
   `);
 
-  // Some existing databases were initialized before the canonical `tag`
-  // column existed. Creating the table conditionally does not repair that
-  // older table, so explicitly add/backfill the compatible column at startup.
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS hashtags(
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -144,6 +141,18 @@ export async function ensureSocialSchema() {
   `);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS post_hashtags_tag_idx ON post_hashtags(hashtag_id,post_id)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS post_hashtags_post_idx ON post_hashtags(post_id,hashtag_id)`);
+
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS post_views(
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      post_id uuid NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+      user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      UNIQUE(post_id,user_id)
+    )
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS post_views_post_idx ON post_views(post_id,created_at DESC)`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS post_views_user_idx ON post_views(user_id,created_at DESC)`);
 
   await db.execute(sql`CREATE INDEX IF NOT EXISTS post_comments_post_parent_idx ON post_comments(post_id,parent_id,created_at)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS posts_author_created_idx ON posts(author_id,created_at DESC)`);
