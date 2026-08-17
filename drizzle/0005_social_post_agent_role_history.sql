@@ -2,7 +2,7 @@ CREATE TABLE IF NOT EXISTS agent_role_requests (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   agent_id uuid NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
   user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  current_role varchar(160),
+  "current_role" varchar(160),
   requested_role varchar(160) NOT NULL,
   status varchar(20) NOT NULL DEFAULT 'pending',
   created_at timestamptz NOT NULL DEFAULT now(),
