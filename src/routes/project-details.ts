@@ -21,8 +21,11 @@ projectDetailsRouter.get("/projects/:slug", async (req, res) => {
 
 projectDetailsRouter.patch("/projects/:slug", requireAuth, async (req,res)=>{
   if(!db)return res.status(503).json({error:"Database unavailable"});
-  const parsed=z.object({githubUrl:z.string().url().refine(v=>/^https?:\\/\\/github\\.com\\/[^/]+\\/[^/]+/.test(v),"A GitHub repository URL is required").nullable().optional(),website:z.string().url().nullable().optional()}).safeParse(req.body);
+  const parsed=z.object({githubUrl:z.string().url().nullable().optional(),website:z.string().url().nullable().optional()}).safeParse(req.body);
   if(!parsed.success)return res.status(400).json({error:"Invalid project links"});
+  if(parsed.data.githubUrl){
+    try { const url=new URL(parsed.data.githubUrl); if(url.hostname.toLowerCase()!=="github.com"||url.pathname.split("/").filter(Boolean).length<2) return res.status(400).json({error:"A GitHub repository URL is required"}); } catch { return res.status(400).json({error:"Invalid GitHub URL"}); }
+  }
   const rows=await db.execute(sql`SELECT id,owner_id FROM projects WHERE lower(slug)=lower(${req.params.slug}) LIMIT 1`);
   const project=(rows as unknown as Record<string,any>[])[0];
   if(!project)return res.status(404).json({error:"Project not found"});
