@@ -33,6 +33,8 @@ socialRouter.post("/posts", requireAuth, async (req, res) => {
     body: z.string().min(1).max(5000),
     topic: z.string().max(80).default("build"),
     projectSlug: z.string().max(100).optional(),
+    // Kept in the API contract for forward compatibility. The current canonical
+    // posts table has no link_url column, so it is not persisted yet.
     linkUrl: z.string().url().max(2000).nullable().optional(),
     media: z.array(z.object({ path: z.string(), mimeType: z.string(), publicUrl: z.string().url().optional() })).max(10).default([]),
   }).safeParse(req.body);
@@ -47,14 +49,38 @@ socialRouter.post("/posts", requireAuth, async (req, res) => {
       projectId = projectRows[0].id;
     }
 
-    const [created] = await db.insert(posts).values({ id, authorId: req.auth!.subjectId, body: parsed.data.body, projectId, proofOfWorkScore: parsed.data.media.length ? "0.7" : "0" }).returning();
-    if (parsed.data.linkUrl) await db.execute(sql`UPDATE posts SET link_url=${parsed.data.linkUrl} WHERE id=${created?.id ?? id}`);
-    if (parsed.data.media.length) await db.insert(postMedia).values(parsed.data.media.map((media, index) => ({ postId: created?.id ?? id, storagePath: media.path, publicUrl: media.publicUrl, mimeType: media.mimeType, sortOrder: index })));
-    return res.status(201).json({ data: { id: created?.id ?? id, body: parsed.data.body, projectId, projectSlug: parsed.data.projectSlug ?? null, linkUrl: parsed.data.linkUrl ?? null, media: parsed.data.media } });
+    const [created] = await db.insert(posts).values({
+      id,
+      authorId: req.auth!.subjectId,
+      body: parsed.data.body,
+      projectId,
+      proofOfWorkScore: parsed.data.media.length ? "0.7" : "0",
+    }).returning();
+
+    if (parsed.data.media.length) {
+      await db.insert(postMedia).values(parsed.data.media.map((media, index) => ({
+        postId: created?.id ?? id,
+        storagePath: media.path,
+        publicUrl: media.publicUrl,
+        mimeType: media.mimeType,
+        sortOrder: index,
+      })));
+    }
+
+    return res.status(201).json({
+      data: {
+        id: created?.id ?? id,
+        body: parsed.data.body,
+        projectId,
+        projectSlug: parsed.data.projectSlug ?? null,
+        linkUrl: null,
+        media: parsed.data.media,
+      },
+    });
   }
 
   feedPosts.unshift({ id, authorId: req.auth!.subjectId, text: parsed.data.body, topic: parsed.data.topic, createdAt: new Date().toISOString(), projectSlug: parsed.data.projectSlug, signals: { relevance: 0.7, freshness: 1, proofOfWork: parsed.data.media.length ? 0.7 : 0.25, meaningfulEngagement: 0, trust: 0.5, projectActivity: 0.4, relationship: 0.5, spamPenalty: 0 } });
-  return res.status(201).json({ data: { id, body: parsed.data.body, projectSlug: parsed.data.projectSlug ?? null, linkUrl: parsed.data.linkUrl ?? null, media: parsed.data.media } });
+  return res.status(201).json({ data: { id, body: parsed.data.body, projectSlug: parsed.data.projectSlug ?? null, linkUrl: null, media: parsed.data.media } });
 });
 
 socialRouter.get("/posts/:postId/comments", (req, res) => res.json({ data: comments.get(String(req.params.postId)) ?? [] }));
@@ -104,7 +130,7 @@ socialRouter.post("/users/:userId/follow", requireAuth, async (req, res) => {
   const set = following.get(req.auth!.subjectId) ?? new Set<string>();
   const active = set.has(userId) ? (set.delete(userId), false) : (set.add(userId), true);
   following.set(req.auth!.subjectId, set);
-  return res.json({ data: { active, followingId: req.params.userId } });
+  return res.json({ data: { active, followingId: userId } });
 });
 
 socialRouter.get("/users/:userId/following", requireAuth, async (req, res) => {
@@ -113,5 +139,5 @@ socialRouter.get("/users/:userId/following", requireAuth, async (req, res) => {
     const [existing] = await db.select().from(followsTable).where(and(eq(followsTable.followerId, req.auth!.subjectId), eq(followsTable.followingId, userId))).limit(1);
     return res.json({ data: { active: Boolean(existing) } });
   }
-  return res.json({ data: { active: following.get(req.auth!.subjectId)?.has(userId) ?? false } });
+  return res.json({ data: { active: following.get(req.auth!.subjectId)?.has(req.auth!.subjectId) ?? false } });
 });
