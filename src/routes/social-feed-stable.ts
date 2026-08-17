@@ -76,6 +76,23 @@ socialFeedStableRouter.get("/feed", async (req,res) => {
   }
 });
 
+socialFeedStableRouter.get("/feed/new-count", async (req,res) => {
+  try {
+    const since = typeof req.query.since === "string" ? new Date(req.query.since) : null;
+    if (!db || !since || Number.isNaN(since.getTime())) return res.json({ data: { count: 0 } });
+    const mode = req.query.mode === "network" ? "network" : "for-you";
+    const viewerId = req.auth?.subjectId;
+    const result = mode === "network" && viewerId
+      ? await db.execute(sql`SELECT COUNT(*)::int count FROM posts p WHERE p.created_at > ${since} AND (p.author_id=${viewerId} OR EXISTS(SELECT 1 FROM follows f WHERE f.follower_id=${viewerId} AND f.following_id=p.author_id))`)
+      : await db.execute(sql`SELECT COUNT(*)::int count FROM posts p WHERE p.created_at > ${since}`);
+    const data = rows(result)[0] ?? { count: 0 };
+    return res.json({ data: { count: Number(data.count ?? 0) } });
+  } catch (error) {
+    console.error("[SocialFeedStable] Failed to check new posts:", error);
+    return res.json({ data: { count: 0 } });
+  }
+});
+
 socialFeedStableRouter.get("/explore/live", async (_req,res) => {
   try {
     const result = await loadPosts();
