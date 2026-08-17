@@ -38,8 +38,11 @@ socialProfileViewRouter.get("/users/:username/profile", async (req, res) => {
     `);
     const counts = countRows[0] ?? { followers: 0, following: 0, projects: 0, posts: 0 };
 
+    // Keep this projection aligned with the actual projects table schema.
+    // logo_url and website_url are not columns in db/schema.ts; requesting
+    // them made every profile request fail with PostgreSQL 42703.
     const projects = await executeRows<Row>(sql`
-      SELECT id,name,slug,description,stage,logo_url,website_url,github_url,created_at
+      SELECT id,name,slug,description,stage,github_url,created_at
       FROM projects
       WHERE owner_id=${user.id}
       ORDER BY created_at DESC
