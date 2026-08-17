@@ -36,6 +36,16 @@ export async function ensureSocialSchema() {
     )
   `);
 
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS follows (
+      follower_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      following_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (follower_id, following_id),
+      CHECK (follower_id <> following_id)
+    )
+  `);
+
   await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS agent_verification_user_active_idx ON agent_verification_requests(user_id) WHERE status IN ('pending_dns','pending_review')`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS agent_verification_status_idx ON agent_verification_requests(status, created_at DESC)`);
 
@@ -46,8 +56,6 @@ export async function ensureSocialSchema() {
   await db.execute(sql`CREATE INDEX IF NOT EXISTS follows_follower_idx ON follows(follower_id, created_at DESC)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS project_collaborators_user_status_idx ON project_collaborators(user_id, status, created_at DESC)`);
 
-  // Legacy builds could mark an Agent as an Agent before any verification existed.
-  // Downgrade those accounts until a real verification request is approved.
   await db.execute(sql`
     UPDATE users u
     SET account_type='user'
