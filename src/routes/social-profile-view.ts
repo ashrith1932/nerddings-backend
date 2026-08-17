@@ -26,26 +26,16 @@ socialProfileViewRouter.get("/users/:username/profile", async (req, res) => {
       SELECT
         (SELECT COUNT(*)::int FROM follows WHERE following_id=${user.id}) followers,
         (SELECT COUNT(*)::int FROM follows WHERE follower_id=${user.id}) following,
-        (SELECT COUNT(DISTINCT p.id)::int
-          FROM projects p
-          LEFT JOIN project_collaborators pc
-            ON pc.project_id=p.id
-            AND pc.user_id=${user.id}
-            AND pc.status='accepted'
-          WHERE p.owner_id=${user.id} OR pc.user_id IS NOT NULL) projects,
+        (SELECT COUNT(*)::int FROM projects WHERE owner_id=${user.id}) projects,
         (SELECT COUNT(*)::int FROM posts WHERE author_id=${user.id}) posts
     `) as unknown as Row[])[0] ?? { followers: 0, following: 0, projects: 0, posts: 0 };
 
-    // The current projects schema does not define github_url, so don't select it here.
+    // The canonical projects schema currently supports ownership, not collaborators.
     const projects = await db.execute(sql`
-      SELECT DISTINCT p.id,p.name,p.slug,p.description,p.stage,p.created_at
-      FROM projects p
-      LEFT JOIN project_collaborators pc
-        ON pc.project_id=p.id
-        AND pc.user_id=${user.id}
-        AND pc.status='accepted'
-      WHERE p.owner_id=${user.id} OR pc.user_id IS NOT NULL
-      ORDER BY p.created_at DESC
+      SELECT id,name,slug,description,stage,created_at
+      FROM projects
+      WHERE owner_id=${user.id}
+      ORDER BY created_at DESC
       LIMIT 24
     `) as unknown as Row[];
 
