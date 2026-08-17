@@ -5,6 +5,7 @@ import { env } from "./config/env.js";
 import { optionalAuth } from "./middleware/auth.js";
 import { discoveryRouter } from "./routes/discovery.js";
 import { feedRouter } from "./routes/feed.js";
+import { socialFeedRouter } from "./routes/social-feed.js";
 import { fundraisingRouter } from "./routes/fundraising.js";
 import { authRouter } from "./routes/auth.js";
 import { socialRouter } from "./routes/social.js";
@@ -23,27 +24,23 @@ const allowedOrigins = new Set([
   env.FRONTEND_ORIGIN,
 ]);
 
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      if (!origin || allowedOrigins.has(origin)) {
-        return callback(null, true);
-      }
-
-      console.warn("[CORS] Blocked origin:", origin);
-      return callback(new Error("Not allowed by CORS"));
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-    optionsSuccessStatus: 204,
-  }),
-);
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.has(origin)) return callback(null, true);
+    console.warn("[CORS] Blocked origin:", origin);
+    return callback(new Error("Not allowed by CORS"));
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  optionsSuccessStatus: 204,
+}));
 app.use(express.json({ limit: "1mb" }));
 app.use(optionalAuth);
 
 app.get("/health", (_req, res) => res.json({ ok: true, service: "nerdding-backend", mode: env.DATABASE_URL ? "postgres" : "memory-preview" }));
 app.use("/api/v1/feed", feedRouter);
+app.use("/api/v1/social", socialFeedRouter);
 app.use("/api/v1", discoveryRouter);
 app.use("/api/v1/fundraisings", fundraisingRouter);
 app.use("/api/v1/auth", authRouter);
