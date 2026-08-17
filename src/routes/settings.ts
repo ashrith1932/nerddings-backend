@@ -2,27 +2,9 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../middleware/auth.js";
 import { db } from "../db/client.js";
-import { users, userSettings } from "../db/schema.js";
-import { eq } from "drizzle-orm";
-
-export const settingsRouter = Router();
-
-settingsRouter.patch("/profile", requireAuth, async (req, res) => {
-  const parsed = z.object({ name: z.string().min(2).max(160).optional(), bio: z.string().max(500).optional(), location: z.string().max(160).optional(), avatarUrl: z.string().url().nullable().optional() }).safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "Profile details are invalid." });
-  if (db) {
-    const [updated] = await db.update(users).set(parsed.data).where(eq(users.id, req.auth!.subjectId)).returning({ id: users.id, name: users.name, bio: users.bio, location: users.location, avatarUrl: users.avatarUrl });
-    return res.json({ data: updated });
-  }
-  return res.json({ data: { id: req.auth!.subjectId, ...parsed.data } });
-});
-
-settingsRouter.patch("/privacy", requireAuth, async (req, res) => {
-  const parsed = z.object({ discoverable: z.boolean().optional(), emailNotifications: z.boolean().optional(), pushNotifications: z.boolean().optional(), allowMessages: z.boolean().optional() }).safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "Privacy settings are invalid." });
-  if (db) {
-    const [updated] = await db.insert(userSettings).values({ userId: req.auth!.subjectId, ...parsed.data }).onConflictDoUpdate({ target: userSettings.userId, set: { ...parsed.data, updatedAt: new Date() } }).returning();
-    return res.json({ data: updated });
-  }
-  return res.json({ data: { userId: req.auth!.subjectId, ...parsed.data } });
-});
+import { users,userSettings } from "../db/schema.js";
+import { eq,sql } from "drizzle-orm";
+export const settingsRouter=Router();
+settingsRouter.patch("/profile",requireAuth,async(req,res)=>{const parsed=z.object({name:z.string().min(2).max(160).optional(),bio:z.string().max(500).optional(),location:z.string().max(160).optional(),avatarUrl:z.string().url().nullable().optional(),coverUrl:z.string().url().nullable().optional(),profileLogoUrl:z.string().url().nullable().optional(),coverPositionX:z.number().min(0).max(100).optional(),coverPositionY:z.number().min(0).max(100).optional()}).safeParse(req.body);if(!parsed.success)return res.status(400).json({error:"Profile details are invalid."});if(db){const values:any={};if(parsed.data.name!==undefined)values.name=parsed.data.name;if(parsed.data.bio!==undefined)values.bio=parsed.data.bio;if(parsed.data.location!==undefined)values.location=parsed.data.location;if(parsed.data.avatarUrl!==undefined)values.avatarUrl=parsed.data.avatarUrl;let updated:any=null;if(Object.keys(values).length){[updated]=await db.update(users).set(values).where(eq(users.id,req.auth!.subjectId)).returning({id:users.id,name:users.name,bio:users.bio,location:users.location,avatarUrl:users.avatarUrl})}if(parsed.data.coverUrl!==undefined||parsed.data.profileLogoUrl!==undefined||parsed.data.coverPositionX!==undefined||parsed.data.coverPositionY!==undefined){await db.execute(sql`UPDATE users SET cover_url=COALESCE(${parsed.data.coverUrl??null},cover_url),profile_logo_url=COALESCE(${parsed.data.profileLogoUrl??null},profile_logo_url),cover_position_x=COALESCE(${parsed.data.coverPositionX??null},cover_position_x),cover_position_y=COALESCE(${parsed.data.coverPositionY??null},cover_position_y) WHERE id=${req.auth!.subjectId}`)}if(!updated){const[u]=await db.select({id:users.id,name:users.name,bio:users.bio,location:users.location,avatarUrl:users.avatarUrl}).from(users).where(eq(users.id,req.auth!.subjectId)).limit(1);updated=u}return res.json({data:updated})}return res.json({data:{id:req.auth!.subjectId,...parsed.data}})});
+settingsRouter.get("/privacy",requireAuth,async(req,res)=>{if(!db)return res.json({data:{discoverable:true,emailNotifications:true,pushNotifications:true,allowMessages:true}});const[settings]=await db.select().from(userSettings).where(eq(userSettings.userId,req.auth!.subjectId)).limit(1);return res.json({data:settings??{discoverable:true,emailNotifications:true,pushNotifications:true,allowMessages:true}})});
+settingsRouter.patch("/privacy",requireAuth,async(req,res)=>{const parsed=z.object({discoverable:z.boolean().optional(),emailNotifications:z.boolean().optional(),pushNotifications:z.boolean().optional(),allowMessages:z.boolean().optional()}).safeParse(req.body);if(!parsed.success)return res.status(400).json({error:"Privacy settings are invalid."});if(db){const[updated]=await db.insert(userSettings).values({userId:req.auth!.subjectId,...parsed.data}).onConflictDoUpdate({target:userSettings.userId,set:{...parsed.data,updatedAt:new Date()}}).returning();return res.json({data:updated})}return res.json({data:{userId:req.auth!.subjectId,...parsed.data}})});
