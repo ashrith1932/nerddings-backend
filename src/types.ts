@@ -24,6 +24,7 @@ export type FeedPost = {
   createdAt: string;
   signals: RankingSignals;
   projectSlug?: string;
+  quotePostId?: string;
 };
 
 export type ExploreStory = FeedPost & {
