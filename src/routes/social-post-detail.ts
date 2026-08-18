@@ -4,6 +4,7 @@ import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { requireAuth } from "../middleware/auth.js";
 import { db } from "../db/client.js";
+import { createSignedReadUrl } from "../lib/storage.js";
 
 export const socialPostDetailRouter = Router();
 type Row = Record<string, any>;
@@ -11,6 +12,13 @@ type Row = Record<string, any>;
 async function executeRows(query: any): Promise<Row[]> {
   const result = await db!.execute(query) as unknown as Row[] | { rows: Row[] };
   return Array.isArray(result) ? result : result.rows;
+}
+
+async function serializeMedia(media: Row[]) {
+  return Promise.all(media.map(async (item) => ({
+    publicUrl: (await createSignedReadUrl(String(item.storage_path ?? ""))) ?? item.public_url ?? null,
+    mimeType: item.mime_type,
+  })));
 }
 
 function serializePost(row: Row, media: Row[], commentsTree: Row[]) {
@@ -33,7 +41,7 @@ function serializePost(row: Row, media: Row[], commentsTree: Row[]) {
     reposted: Boolean(row.viewer_reposted),
     project: row.project_id ? { id: row.project_id, name: row.project_name, slug: row.project_slug, stage: row.project_stage, description: row.project_description, githubUrl: row.github_url } : null,
     quotePostId: row.quote_post_id ?? null,
-    media: media.map((item) => ({ publicUrl: item.public_url ?? null, mimeType: item.mime_type })),
+    media,
     commentsTree,
   };
 }
@@ -89,7 +97,8 @@ socialPostDetailRouter.get("/posts/:postId", async (req, res) => {
       if (inserted[0]) post.views = Number(post.views ?? 0) + 1;
     }
 
-    const media = await executeRows(sql`SELECT public_url,mime_type FROM post_media WHERE post_id=${req.params.postId} ORDER BY sort_order ASC`);
+    const mediaRows = await executeRows(sql`SELECT storage_path,public_url,mime_type FROM post_media WHERE post_id=${req.params.postId} ORDER BY sort_order ASC`);
+    const media = await serializeMedia(mediaRows);
     const commentsTree = await loadComments(String(req.params.postId));
     return res.json({ data: serializePost(post, media, commentsTree) });
   } catch (error) {
