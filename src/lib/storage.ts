@@ -18,6 +18,13 @@ export async function createUploadUrl(userId: string, fileName: string, contentT
   return { path, token: data.token, signedUrl: data.signedUrl, contentType, publicUrl: `${env.SUPABASE_URL}/storage/v1/object/public/${env.STORAGE_BUCKET}/${path}` };
 }
 
+export async function createSignedReadUrl(path: string, expiresIn = 60 * 60 * 6) {
+  if (!supabase || !path) return null;
+  const { data, error } = await supabase.storage.from(env.STORAGE_BUCKET).createSignedUrl(path, expiresIn);
+  if (error || !data?.signedUrl) return null;
+  return data.signedUrl;
+}
+
 export async function removeObject(path: string) {
   if (!supabase) return;
   await supabase.storage.from(env.STORAGE_BUCKET).remove([path]);
