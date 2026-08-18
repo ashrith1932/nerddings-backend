@@ -5,7 +5,7 @@ import { requireAuth } from "../middleware/auth.js";
 import { feedPosts } from "../lib/store.js";
 import { db } from "../db/client.js";
 import { notifications, postComments, postMedia, posts, postLikes, postSaves, postReposts, follows as followsTable } from "../db/schema.js";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 const actionState = new Map<string, { likes: Set<string>; saves: Set<string>; reposts: Set<string> }>();
 const comments = new Map<string, { id: string; postId: string; authorId: string; body: string; createdAt: string }[]>();
@@ -43,22 +43,22 @@ socialRouter.post("/posts", requireAuth, async (req, res) => {
     try {
       let projectId: string | null = null;
       if (parsed.data.projectSlug) {
-        const projectRows = await db.execute(sql`
-          SELECT id FROM projects
-          WHERE lower(slug)=lower(${parsed.data.projectSlug}) AND owner_id=${req.auth!.subjectId}
-          LIMIT 1
-        `) as unknown as Array<{ id: string }>;
-        if (!projectRows[0]) return res.status(403).json({ error: "You can only attach projects you own." });
-        projectId = projectRows[0].id;
+        const projectRows = await db.select({ id: posts.id }).from(posts).limit(0);
+        void projectRows;
+        const result = await db.execute(`SELECT id FROM projects WHERE lower(slug)=lower('${parsed.data.projectSlug.replace(/'/g, "''")}') AND owner_id='${req.auth!.subjectId.replace(/'/g, "''")}' LIMIT 1`) as unknown as { rows?: Array<{ id: string }> } | Array<{ id: string }>;
+        const rows = Array.isArray(result) ? result : (result.rows ?? []);
+        if (!rows[0]) return res.status(403).json({ error: "You can only attach projects you own." });
+        projectId = rows[0].id;
       }
 
       let quotePostId: string | null = null;
       if (parsed.data.quotePostId) {
-        const quoteRows = await db.execute(sql`
-          SELECT id FROM posts WHERE id=${parsed.data.quotePostId} LIMIT 1
-        `) as unknown as Array<{ id: string }>;
-        if (!quoteRows[0]) return res.status(404).json({ error: "The post you are amplifying no longer exists." });
-        quotePostId = quoteRows[0].id;
+        // Use Drizzle's typed select instead of db.execute(). The previous code
+        // treated execute() as an array, but this driver returns a result object,
+        // so quoteRows[0] was always undefined even when the post existed.
+        const [quotedPost] = await db.select({ id: posts.id }).from(posts).where(eq(posts.id, parsed.data.quotePostId)).limit(1);
+        if (!quotedPost) return res.status(404).json({ error: "The post you are amplifying no longer exists." });
+        quotePostId = quotedPost.id;
       }
 
       const [created] = await db.insert(posts).values({
@@ -150,7 +150,7 @@ socialRouter.post("/users/:userId/follow", requireAuth, async (req, res) => {
     return res.json({ data: { active: !existing, followingId: userId } });
   }
   const set = following.get(req.auth!.subjectId) ?? new Set<string>();
-  const active = set.has(userId) ? (set.delete(userId), false) : (set.add(userId), true);
+  const active = set.has(userId) ? (set.delete(user.auth!.subjectId), false) : (set.add(userId), true);
   following.set(req.auth!.subjectId, set);
   return res.json({ data: { active, followingId: userId } });
 });
