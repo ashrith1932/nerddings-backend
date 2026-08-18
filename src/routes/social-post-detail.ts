@@ -21,7 +21,7 @@ async function serializeMedia(media: Row[]) {
   })));
 }
 
-function serializePost(row: Row, media: Row[], commentsTree: Row[]) {
+function serializePost(row: Row, media: Row[], commentsTree: Row[], quotePost: Row | null = null) {
   return {
     id: row.id,
     authorId: row.author_id,
@@ -41,8 +41,46 @@ function serializePost(row: Row, media: Row[], commentsTree: Row[]) {
     reposted: Boolean(row.viewer_reposted),
     project: row.project_id ? { id: row.project_id, name: row.project_name, slug: row.project_slug, stage: row.project_stage, description: row.project_description, githubUrl: row.github_url } : null,
     quotePostId: row.quote_post_id ?? null,
+    quotePost,
     media,
     commentsTree,
+  };
+}
+
+async function loadQuotedPost(postId: string | null | undefined) {
+  if (!postId) return null;
+  const rows = await executeRows(sql`
+    SELECT p.id,p.author_id,p.body,p.link_url,p.proof_of_work_score,p.created_at,p.project_id,
+           u.name,u.username,u.avatar_url,u.account_type,
+           pr.name project_name,pr.slug project_slug,pr.stage project_stage,pr.description project_description,pr.github_url,
+           (SELECT COUNT(*)::int FROM post_likes x WHERE x.post_id=p.id) likes,
+           (SELECT COUNT(*)::int FROM post_comments x WHERE x.post_id=p.id) comments,
+           (SELECT COUNT(*)::int FROM post_reposts x WHERE x.post_id=p.id) reposts,
+           (SELECT COUNT(*)::int FROM post_saves x WHERE x.post_id=p.id) saves,
+           (SELECT COUNT(*)::int FROM post_views x WHERE x.post_id=p.id) views
+    FROM posts p
+    JOIN users u ON u.id=p.author_id
+    LEFT JOIN projects pr ON pr.id=p.project_id
+    WHERE p.id=${postId}
+    LIMIT 1
+  `);
+  const row = rows[0];
+  if (!row) return null;
+  const mediaRows = await executeRows(sql`SELECT storage_path,public_url,mime_type FROM post_media WHERE post_id=${postId} ORDER BY sort_order ASC`);
+  const media = await serializeMedia(mediaRows);
+  return {
+    id: row.id,
+    author: { id: row.author_id, name: row.name, username: row.username, avatarUrl: row.avatar_url, accountType: row.account_type },
+    text: row.body,
+    createdAt: row.created_at,
+    linkUrl: row.link_url ?? null,
+    likes: Number(row.likes ?? 0),
+    comments: Number(row.comments ?? 0),
+    reposts: Number(row.reposts ?? 0),
+    saves: Number(row.saves ?? 0),
+    views: Number(row.views ?? 0),
+    project: row.project_id ? { id: row.project_id, name: row.project_name, slug: row.project_slug, stage: row.project_stage, description: row.project_description, githubUrl: row.github_url } : null,
+    media,
   };
 }
 
@@ -100,7 +138,8 @@ socialPostDetailRouter.get("/posts/:postId", async (req, res) => {
     const mediaRows = await executeRows(sql`SELECT storage_path,public_url,mime_type FROM post_media WHERE post_id=${req.params.postId} ORDER BY sort_order ASC`);
     const media = await serializeMedia(mediaRows);
     const commentsTree = await loadComments(String(req.params.postId));
-    return res.json({ data: serializePost(post, media, commentsTree) });
+    const quotePost = await loadQuotedPost(post.quote_post_id);
+    return res.json({ data: serializePost(post, media, commentsTree, quotePost) });
   } catch (error) {
     console.error("[Social] Failed to load post detail:", error);
     return res.status(500).json({ error: "This post could not be loaded right now." });
