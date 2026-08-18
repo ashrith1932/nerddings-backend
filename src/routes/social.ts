@@ -33,6 +33,7 @@ socialRouter.post("/posts", requireAuth, async (req, res) => {
     topic: z.string().max(80).default("build"),
     projectSlug: z.string().max(100).optional(),
     linkUrl: z.string().url().max(2000).nullable().optional(),
+    quotePostId: z.string().uuid().nullable().optional(),
     media: z.array(z.object({ path: z.string(), mimeType: z.string(), publicUrl: z.string().url().optional() })).max(10).default([]),
   }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Write an update before publishing.", details: parsed.error.flatten() });
@@ -51,11 +52,21 @@ socialRouter.post("/posts", requireAuth, async (req, res) => {
         projectId = projectRows[0].id;
       }
 
+      let quotePostId: string | null = null;
+      if (parsed.data.quotePostId) {
+        const quoteRows = await db.execute(sql`
+          SELECT id FROM posts WHERE id=${parsed.data.quotePostId} LIMIT 1
+        `) as unknown as Array<{ id: string }>;
+        if (!quoteRows[0]) return res.status(404).json({ error: "The post you are amplifying no longer exists." });
+        quotePostId = quoteRows[0].id;
+      }
+
       const [created] = await db.insert(posts).values({
         id,
         authorId: req.auth!.subjectId,
         body: parsed.data.body,
         projectId,
+        quotePostId,
         linkUrl: parsed.data.linkUrl ?? null,
         proofOfWorkScore: parsed.data.media.length ? "0.7" : "0",
       }).returning();
@@ -75,6 +86,7 @@ socialRouter.post("/posts", requireAuth, async (req, res) => {
         body: parsed.data.body,
         projectId,
         projectSlug: parsed.data.projectSlug ?? null,
+        quotePostId,
         linkUrl: parsed.data.linkUrl ?? null,
         media: parsed.data.media,
       } });
@@ -84,8 +96,8 @@ socialRouter.post("/posts", requireAuth, async (req, res) => {
     }
   }
 
-  feedPosts.unshift({ id, authorId: req.auth!.subjectId, text: parsed.data.body, topic: parsed.data.topic, createdAt: new Date().toISOString(), projectSlug: parsed.data.projectSlug, signals: { relevance: 0.7, freshness: 1, proofOfWork: parsed.data.media.length ? 0.7 : 0.25, meaningfulEngagement: 0, trust: 0.5, projectActivity: 0.4, relationship: 0.5, spamPenalty: 0 } });
-  return res.status(201).json({ data: { id, body: parsed.data.body, projectSlug: parsed.data.projectSlug ?? null, linkUrl: parsed.data.linkUrl ?? null, media: parsed.data.media } });
+  feedPosts.unshift({ id, authorId: req.auth!.subjectId, text: parsed.data.body, topic: parsed.data.topic, createdAt: new Date().toISOString(), projectSlug: parsed.data.projectSlug, quotePostId: parsed.data.quotePostId ?? undefined, signals: { relevance: 0.7, freshness: 1, proofOfWork: parsed.data.media.length ? 0.7 : 0.25, meaningfulEngagement: 0, trust: 0.5, projectActivity: 0.4, relationship: 0.5, spamPenalty: 0 } });
+  return res.status(201).json({ data: { id, body: parsed.data.body, projectSlug: parsed.data.projectSlug ?? null, quotePostId: parsed.data.quotePostId ?? null, linkUrl: parsed.data.linkUrl ?? null, media: parsed.data.media } });
 });
 
 socialRouter.get("/posts/:postId/comments", (req, res) => res.json({ data: comments.get(String(req.params.postId)) ?? [] }));
