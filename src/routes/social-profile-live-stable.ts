@@ -15,7 +15,29 @@ socialProfileLiveStableRouter.get("/users/:username/profile-live",async(req,res)
     let media:Row={};try{media=(await rows(sql`SELECT cover_url,profile_logo_url,cover_position_x,cover_position_y FROM users WHERE id=${user.id} LIMIT 1`))[0]??{};}catch{}
     let stats={followers:0,following:0,projects:0,posts:0};try{const r=(await rows(sql`SELECT (SELECT COUNT(*)::int FROM follows WHERE following_id=${user.id}) followers,(SELECT COUNT(*)::int FROM follows WHERE follower_id=${user.id}) following,(SELECT COUNT(*)::int FROM projects WHERE owner_id=${user.id}) projects,(SELECT COUNT(*)::int FROM posts WHERE author_id=${user.id}) posts`))[0];if(r)stats={followers:Number(r.followers||0),following:Number(r.following||0),projects:Number(r.projects||0),posts:Number(r.posts||0)};}catch{}
     let projects:Row[]=[];try{projects=await rows(sql`SELECT id,name,slug,description,stage,github_url,created_at FROM projects WHERE owner_id=${user.id} OR EXISTS(SELECT 1 FROM project_collaborators pc WHERE pc.project_id=projects.id AND pc.user_id=${user.id} AND pc.status='accepted') ORDER BY created_at DESC LIMIT 50`);}catch{}
-    let posts:Row[]=[];try{posts=await rows(sql`SELECT p.id,p.author_id,p.body,p.created_at,p.project_id,p.agent_id,p.quote_post_id,p.link_url,pr.name project_name,pr.slug project_slug,a.name agent_name,a.slug agent_slug,(SELECT COUNT(*)::int FROM post_likes x WHERE x.post_id=p.id) likes,(SELECT COUNT(*)::int FROM post_comments x WHERE x.post_id=p.id) comments,(SELECT COUNT(*)::int FROM post_reposts x WHERE x.post_id=p.id) reposts,(SELECT COUNT(*)::int FROM post_saves x WHERE x.post_id=p.id) saves FROM posts p LEFT JOIN projects pr ON pr.id=p.project_id LEFT JOIN agents a ON a.id=p.agent_id WHERE p.author_id=${user.id} ORDER BY p.created_at DESC LIMIT 100`);}catch{}
+    let posts:Row[]=[];try{posts=await rows(sql`
+      SELECT p.id,p.author_id,p.body,p.created_at,p.project_id,p.agent_id,p.quote_post_id,p.link_url,
+        pr.name project_name,pr.slug project_slug,a.name agent_name,a.slug agent_slug,
+        (SELECT COUNT(*)::int FROM post_likes x WHERE x.post_id=p.id) likes,
+        (SELECT COUNT(*)::int FROM post_comments x WHERE x.post_id=p.id) comments,
+        (SELECT COUNT(*)::int FROM post_reposts x WHERE x.post_id=p.id) reposts,
+        (SELECT COUNT(*)::int FROM post_saves x WHERE x.post_id=p.id) saves,
+        COALESCE((SELECT json_agg(json_build_object('publicUrl',pm.public_url,'mimeType',pm.mime_type) ORDER BY pm.sort_order) FROM post_media pm WHERE pm.post_id=p.id),'[]'::json) media,
+        (SELECT json_build_object(
+          'id',qp.id,
+          'text',qp.body,
+          'createdAt',qp.created_at,
+          'linkUrl',qp.link_url,
+          'author',json_build_object('id',qu.id,'name',qu.name,'username',qu.username,'avatarUrl',qu.avatar_url,'accountType',qu.account_type),
+          'media',COALESCE((SELECT json_agg(json_build_object('publicUrl',qpm.public_url,'mimeType',qpm.mime_type) ORDER BY qpm.sort_order) FROM post_media qpm WHERE qpm.post_id=qp.id),'[]'::json),
+          'likes',(SELECT COUNT(*)::int FROM post_likes ql WHERE ql.post_id=qp.id),
+          'comments',(SELECT COUNT(*)::int FROM post_comments qc WHERE qc.post_id=qp.id),
+          'reposts',(SELECT COUNT(*)::int FROM post_reposts qr WHERE qr.post_id=qp.id),
+          'saves',(SELECT COUNT(*)::int FROM post_saves qs WHERE qs.post_id=qp.id)
+        ) FROM posts qp JOIN users qu ON qu.id=qp.author_id WHERE qp.id=p.quote_post_id) quote_post
+      FROM posts p LEFT JOIN projects pr ON pr.id=p.project_id LEFT JOIN agents a ON a.id=p.agent_id
+      WHERE p.author_id=${user.id} ORDER BY p.created_at DESC LIMIT 100
+    `);}catch{}
     let followers:Row[]=[];try{followers=await rows(sql`SELECT u.id,u.name,u.username,u.avatar_url,u.account_type,u.bio FROM follows f JOIN users u ON u.id=f.follower_id WHERE f.following_id=${user.id} ORDER BY f.created_at DESC LIMIT 100`);}catch{}
     let followingList:Row[]=[];try{followingList=await rows(sql`SELECT u.id,u.name,u.username,u.avatar_url,u.account_type,u.bio FROM follows f JOIN users u ON u.id=f.following_id WHERE f.follower_id=${user.id} ORDER BY f.created_at DESC LIMIT 100`);}catch{}
     let affiliations:Row[]=[];try{affiliations=await rows(sql`SELECT a.id,a.name,a.slug,a.type,a.website,a.verified,aa.role,aa.verified_at FROM agent_affiliations aa JOIN agents a ON a.id=aa.agent_id WHERE aa.user_id=${user.id} ORDER BY aa.verified_at DESC`);}catch{}
@@ -25,6 +47,6 @@ socialProfileLiveStableRouter.get("/users/:username/profile-live",async(req,res)
     for(const a of affiliations){const key=String(a.id);if(!(historyByAgent.get(key)?.length)){historyByAgent.set(key,[{id:`initial-${a.id}`,agent_id:a.id,role:a.role,event_type:"affiliation",created_at:a.verified_at,agent_name:a.name,agent_slug:a.slug}]);}}
     const buildHistory=posts.filter(p=>p.project_id).sort((a,b)=>new Date(a.created_at).getTime()-new Date(b.created_at).getTime()).map(p=>({id:p.id,createdAt:p.created_at,postId:p.id,projectId:p.project_id,projectName:p.project_name,projectSlug:p.project_slug,text:p.body,authorId:p.author_id}));
     const mapPerson=(p:Row)=>({id:p.id,name:p.name,username:p.username,avatarUrl:p.avatar_url??null,accountType:p.account_type,bio:p.bio??null});
-    return res.json({data:{user:{...user,avatarUrl:user.avatarUrl,coverUrl:media.cover_url??null,profileLogoUrl:media.profile_logo_url??null,coverPositionX:Number(media.cover_position_x??50),coverPositionY:Number(media.cover_position_y??50)},stats,projects,posts:posts.map(p=>({id:p.id,authorId:p.author_id,text:p.body,createdAt:p.created_at,projectId:p.project_id,projectName:p.project_name,projectSlug:p.project_slug,agentId:p.agent_id,agentName:p.agent_name,agentSlug:p.agent_slug,quotePostId:p.quote_post_id,linkUrl:p.link_url??null,likes:Number(p.likes||0),comments:Number(p.comments||0),reposts:Number(p.reposts||0),saves:Number(p.saves||0)})),buildHistory,followers:followers.map(mapPerson),following:followingList.map(mapPerson),affiliations:affiliations.map(a=>({id:a.id,name:a.name,slug:a.slug,type:a.type,website:a.website,verified:Boolean(a.verified),role:a.role,status:"accepted",timeline:(historyByAgent.get(String(a.id))??[]).map(h=>({id:h.id,role:h.role,eventType:h.event_type,createdAt:h.created_at}))}))}});
+    return res.json({data:{user:{...user,avatarUrl:user.avatarUrl,coverUrl:media.cover_url??null,profileLogoUrl:media.profile_logo_url??null,coverPositionX:Number(media.cover_position_x??50),coverPositionY:Number(media.cover_position_y??50)},stats,projects,posts:posts.map(p=>({id:p.id,authorId:p.author_id,text:p.body,createdAt:p.created_at,projectId:p.project_id,projectName:p.project_name,projectSlug:p.project_slug,agentId:p.agent_id,agentName:p.agent_name,agentSlug:p.agent_slug,quotePostId:p.quote_post_id??null,quotePost:p.quote_post??null,linkUrl:p.link_url??null,media:p.media??[],likes:Number(p.likes||0),comments:Number(p.comments||0),reposts:Number(p.reposts||0),saves:Number(p.saves||0)})),buildHistory,followers:followers.map(mapPerson),following:followingList.map(mapPerson),affiliations:affiliations.map(a=>({id:a.id,name:a.name,slug:a.slug,type:a.type,website:a.website,verified:Boolean(a.verified),role:a.role,status:"accepted",timeline:(historyByAgent.get(String(a.id))??[]).map(h=>({id:h.id,role:h.role,eventType:h.event_type,createdAt:h.created_at}))}))}});
   }catch(error){console.error("[SocialProfileLiveStable] Failed:",error);return res.status(500).json({error:"Unable to load profile"});}
 });
