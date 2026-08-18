@@ -45,7 +45,21 @@ async function loadPosts(viewerId?: string, mode: "for-you" | "network" = "for-y
       EXISTS(SELECT 1 FROM post_saves vs WHERE vs.post_id=p.id AND vs.user_id=${viewerId ?? null}) viewer_saved,
       EXISTS(SELECT 1 FROM post_reposts vr WHERE vr.post_id=p.id AND vr.user_id=${viewerId ?? null}) viewer_reposted,
       COALESCE((SELECT json_agg(json_build_object('publicUrl',pm.public_url,'mimeType',pm.mime_type) ORDER BY pm.sort_order) FROM post_media pm WHERE pm.post_id=p.id),'[]'::json) media,
-      COALESCE((SELECT json_agg(h.tag ORDER BY h.tag) FROM post_hashtags ph JOIN hashtags h ON h.id=ph.hashtag_id WHERE ph.post_id=p.id),'[]'::json) hashtags
+      COALESCE((SELECT json_agg(h.tag ORDER BY h.tag) FROM post_hashtags ph JOIN hashtags h ON h.id=ph.hashtag_id WHERE ph.post_id=p.id),'[]'::json) hashtags,
+      (SELECT json_build_object(
+        'id',qp.id,
+        'text',qp.body,
+        'createdAt',qp.created_at,
+        'linkUrl',qp.link_url,
+        'author',json_build_object('id',qu.id,'name',qu.name,'username',qu.username,'avatarUrl',qu.avatar_url,'accountType',qu.account_type),
+        'project',CASE WHEN qpr.id IS NULL THEN NULL ELSE json_build_object('id',qpr.id,'name',qpr.name,'slug',qpr.slug,'stage',qpr.stage,'description',qpr.description,'githubUrl',qpr.github_url) END,
+        'media',COALESCE((SELECT json_agg(json_build_object('publicUrl',qpm.public_url,'mimeType',qpm.mime_type) ORDER BY qpm.sort_order) FROM post_media qpm WHERE qpm.post_id=qp.id),'[]'::json),
+        'likes',(SELECT COUNT(*)::int FROM post_likes ql WHERE ql.post_id=qp.id),
+        'comments',(SELECT COUNT(*)::int FROM post_comments qc WHERE qc.post_id=qp.id),
+        'reposts',(SELECT COUNT(*)::int FROM post_reposts qr WHERE qr.post_id=qp.id),
+        'saves',(SELECT COUNT(*)::int FROM post_saves qs WHERE qs.post_id=qp.id),
+        'views',(SELECT COUNT(*)::int FROM post_views qv WHERE qv.post_id=qp.id)
+      ) FROM posts qp JOIN users qu ON qu.id=qp.author_id LEFT JOIN projects qpr ON qpr.id=qp.project_id WHERE qp.id=p.quote_post_id) quote_post
     FROM posts p JOIN users u ON u.id=p.author_id
     LEFT JOIN projects pr ON pr.id=p.project_id
     LEFT JOIN post_likes pl ON pl.post_id=p.id LEFT JOIN post_comments pc ON pc.post_id=p.id
@@ -99,6 +113,7 @@ function serialize(row: Row) {
     linkUrl: row.link_url ?? null, media: row.media ?? [], hashtags: Array.isArray(row.hashtags) ? row.hashtags : [],
     project: row.project_id ? { id: row.project_id, name: row.project_name, slug: row.project_slug, stage: row.project_stage, description: row.project_description, githubUrl: row.github_url ?? null } : null,
     quotePostId: row.quote_post_id ?? null,
+    quotePost: row.quote_post ?? null,
   };
 }
 
