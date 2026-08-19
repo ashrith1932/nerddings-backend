@@ -33,7 +33,7 @@ import { socialProfileLiveStableRouter } from "./routes/social-profile-live-stab
 import { agentRoleRequestsRouter } from "./routes/agent-role-requests.js";
 
 export const app=express();app.use(helmet());
-const allowedOrigins=new Set(["https://thepeoplesrepellentparty.in","https://www.thepeoplesrepellentparty.in",env.FRONTEND_ORIGIN]);
+const allowedOrigins=new Set(["https://nerdding.space","https://www.nerdding.space",env.FRONTEND_ORIGIN]);
 app.use(cors({origin:(origin,callback)=>{if(!origin||allowedOrigins.has(origin))return callback(null,true);console.warn("[CORS] Blocked origin:",origin);return callback(new Error("Not allowed by CORS"))},credentials:true,methods:["GET","POST","PUT","PATCH","DELETE","OPTIONS"],allowedHeaders:["Content-Type","Authorization"],optionsSuccessStatus:204}));
 app.use(express.json({limit:"1mb"}));app.use(optionalAuth);
 app.get("/health",(_req,res)=>res.json({ok:true,service:"nerdding-backend",mode:env.DATABASE_URL?"postgres":"memory-preview"}));
