@@ -7,6 +7,51 @@ type Row=Record<string,any>;
 export const socialProfileLiveStableRouter=Router();
 async function rows(query:any):Promise<Row[]>{const result=await db!.execute(query) as unknown as Row[]|{rows:Row[]};return Array.isArray(result)?result:result.rows;}
 
+async function profileUser(username:string){
+  const result=await rows(sql`SELECT id,name,username,avatar_url,bio,account_type FROM users WHERE username ILIKE ${username} LIMIT 1`);
+  return result[0]??null;
+}
+
+socialProfileLiveStableRouter.get("/users/:username/profile-summary",async(req,res)=>{
+  if(!db)return res.status(404).json({error:"Profile not found"});
+  try{
+    const user=await profileUser(String(req.params.username));
+    if(!user)return res.status(404).json({error:"Profile not found"});
+    const stats=(await rows(sql`SELECT
+      (SELECT COUNT(*)::int FROM follows WHERE following_id=${user.id}) followers,
+      (SELECT COUNT(*)::int FROM follows WHERE follower_id=${user.id}) following,
+      (SELECT COUNT(*)::int FROM projects WHERE owner_id=${user.id}) projects,
+      (SELECT COUNT(*)::int FROM posts WHERE author_id=${user.id}) posts`))[0]??{};
+    const affiliations=await rows(sql`SELECT a.id,a.name,a.slug,a.type,a.verified,aa.role FROM agent_affiliations aa JOIN agents a ON a.id=aa.agent_id WHERE aa.user_id=${user.id} ORDER BY aa.verified_at DESC`);
+    return res.json({data:{user:{id:user.id,name:user.name,username:user.username,avatarUrl:user.avatar_url??null,bio:user.bio??null,accountType:user.account_type},stats:{followers:Number(stats.followers||0),following:Number(stats.following||0),projects:Number(stats.projects||0),posts:Number(stats.posts||0)},affiliations:affiliations.map(a=>({id:a.id,name:a.name,slug:a.slug,type:a.type,verified:Boolean(a.verified),role:a.role}))}});
+  }catch(error){console.error("[ProfileSummary] Failed:",error);return res.status(500).json({error:"Unable to load profile summary"});}
+});
+
+socialProfileLiveStableRouter.get("/users/:username/profile-items",async(req,res)=>{
+  if(!db)return res.status(404).json({error:"Profile not found"});
+  try{
+    const user=await profileUser(String(req.params.username));
+    if(!user)return res.status(404).json({error:"Profile not found"});
+    const type=String(req.query.type||"posts");
+    const limit=Math.min(Math.max(Number(req.query.limit||15),1),30);
+    const cursorCreatedAt=req.query.cursorCreatedAt?new Date(String(req.query.cursorCreatedAt)):null;
+    const cursorId=req.query.cursorId?String(req.query.cursorId):null;
+    const q=String(req.query.q||"").trim();
+    const search=q?`%${q}%`:null;
+    let items:Row[]=[];
+    const cursorPosts=cursorCreatedAt&&cursorId?sql`AND (p.created_at,p.id)<(${cursorCreatedAt},${cursorId})`:sql``;
+    const cursorProjects=cursorCreatedAt&&cursorId?sql`AND (created_at,id)<(${cursorCreatedAt},${cursorId})`:sql``;
+    const cursorPeople=cursorCreatedAt&&cursorId?sql`AND (f.created_at,u.id)<(${cursorCreatedAt},${cursorId})`:sql``;
+    if(type==="posts") items=await rows(sql`SELECT p.id,p.author_id,p.body,p.created_at,p.project_id,p.link_url,pr.name project_name,pr.slug project_slug,(SELECT COUNT(*)::int FROM post_likes x WHERE x.post_id=p.id) likes,(SELECT COUNT(*)::int FROM post_comments x WHERE x.post_id=p.id) comments,(SELECT COUNT(*)::int FROM post_reposts x WHERE x.post_id=p.id) reposts,(SELECT COUNT(*)::int FROM post_saves x WHERE x.post_id=p.id) saves FROM posts p LEFT JOIN projects pr ON pr.id=p.project_id WHERE p.author_id=${user.id} ${search?sql`AND p.body ILIKE ${search}`:sql``} ${cursorPosts} ORDER BY p.created_at DESC,p.id DESC LIMIT ${limit+1}`);
+    else if(type==="projects") items=await rows(sql`SELECT id,name,slug,description,stage,github_url,created_at FROM projects WHERE owner_id=${user.id} ${search?sql`AND (name ILIKE ${search} OR description ILIKE ${search})`:sql``} ${cursorProjects} ORDER BY created_at DESC,id DESC LIMIT ${limit+1}`);
+    else if(type==="followers"||type==="following") { const following=type==="following"; items=await rows(following?sql`SELECT u.id,u.name,u.username,u.avatar_url,u.account_type,u.bio,f.created_at item_created_at FROM follows f JOIN users u ON u.id=f.following_id WHERE f.follower_id=${user.id} ${search?sql`AND (u.name ILIKE ${search} OR u.username ILIKE ${search} OR COALESCE(u.bio,'') ILIKE ${search})`:sql``} ${cursorPeople} ORDER BY f.created_at DESC,u.id DESC LIMIT ${limit+1}`:sql`SELECT u.id,u.name,u.username,u.avatar_url,u.account_type,u.bio,f.created_at item_created_at FROM follows f JOIN users u ON u.id=f.follower_id WHERE f.following_id=${user.id} ${search?sql`AND (u.name ILIKE ${search} OR u.username ILIKE ${search} OR COALESCE(u.bio,'') ILIKE ${search})`:sql``} ${cursorPeople} ORDER BY f.created_at DESC,u.id DESC LIMIT ${limit+1}`); }
+    else return res.status(400).json({error:"Unsupported profile item type"});
+    const hasMore=items.length>limit;const page=items.slice(0,limit);const last=page[page.length-1];
+    const mapped=type==="posts"?page.map(p=>({id:p.id,authorId:p.author_id,text:p.body,createdAt:p.created_at,projectId:p.project_id,projectName:p.project_name,projectSlug:p.project_slug,linkUrl:p.link_url??null,likes:Number(p.likes||0),comments:Number(p.comments||0),reposts:Number(p.reposts||0),saves:Number(p.saves||0)})):type==="projects"?page:page.map(p=>({id:p.id,name:p.name,username:p.username,avatarUrl:p.avatar_url??null,accountType:p.account_type,bio:p.bio??null,createdAt:p.item_created_at}));
+    return res.json({data:{items:mapped,hasMore,nextCursor:hasMore?{createdAt:type==="projects"?last.created_at:last.item_created_at??last.created_at,id:last.id}:null}});
+  }catch(error){console.error("[ProfileItems] Failed:",error);return res.status(500).json({error:"Unable to load profile items"});}
+});
+
 socialProfileLiveStableRouter.get("/users/:username/profile-live",async(req,res)=>{
   if(!db)return res.status(404).json({error:"Profile not found"});
   try{
