@@ -30,6 +30,7 @@ import { nerddingsRouter } from "./routes/nerddings.js";
 import { socialFeedStableRouter } from "./routes/social-feed-stable.js";
 import { socialPostStableRouter } from "./routes/social-post-stable.js";
 import { socialProfileLiveStableRouter } from "./routes/social-profile-live-stable.js";
+import { socialCheckmarksRouter } from "./routes/social-checkmarks.js";
 import { agentRoleRequestsRouter } from "./routes/agent-role-requests.js";
 
 export const app=express();app.use(helmet());
@@ -41,6 +42,7 @@ app.use("/api/v1/feed",feedRouter);
 app.use("/api/v1/social",socialFeedStableRouter);
 app.use("/api/v1/social",socialPostStableRouter);
 app.use("/api/v1/social",socialProfileLiveStableRouter);
+app.use("/api/v1/social",socialCheckmarksRouter);
 app.use("/api/v1/social",socialFeedViewRouter);app.use("/api/v1/social",socialProfileViewRouter);app.use("/api/v1/social",socialProfileLiveRouter);app.use("/api/v1/social",socialPostDetailRouter);app.use("/api/v1/social",socialProjectsRouter);app.use("/api/v1/social",socialMessageMetaRouter);app.use("/api/v1/social",socialPostCreateRouter);app.use("/api/v1/social",socialAmplifyRouter);
 app.use("/api/v1",projectGithubRouter);app.use("/api/v1",projectDetailsRouter);app.use("/api/v1",agentDetailsRouter);app.use("/api/v1/agent-verification",agentVerificationRouter);app.use("/api/v1",agentRoleRequestsRouter);app.use("/api/v1",agentAffiliationsRouter);app.use("/api/v1",discoveryRouter);app.use("/api/v1/fundraisings",fundraisingRouter);app.use("/api/v1/auth",authRouter);app.use("/api/v1",socialRouter);app.use("/api/v1/uploads",uploadsRouter);app.use("/api/v1/messages",messagesRouter);app.use("/api/v1/settings",settingsRouter);app.use("/api/v1/notifications",notificationsRouter);app.use("/api/v1/events",eventsRouter);app.use("/api/v1/nerddings",nerddingsRouter);
 app.use((err:unknown,_req:express.Request,res:express.Response,_next:express.NextFunction)=>{console.error(err);res.status(500).json({error:"Internal server error"});
