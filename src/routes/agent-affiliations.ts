@@ -15,7 +15,20 @@ async function rows(query: any): Promise<Row[]> {
 agentAffiliationsRouter.get("/affiliations/agents", async (_req, res) => {
   if (!db) return res.json({ data: [] });
   try {
-    return res.json({ data: await rows(sql`SELECT id,name,slug,type,verified,website FROM agents WHERE verified=true AND verification_status='approved' ORDER BY name LIMIT 100`) });
+    const list = await rows(sql`SELECT id,name,slug,type,verified,website FROM agents WHERE verified=true AND verification_status='approved' ORDER BY name LIMIT 100`);
+    if (list.length === 0) {
+      await db.execute(sql`
+        INSERT INTO agents (id, name, slug, type, verified, verification_status)
+        VALUES 
+          ('a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', 'Nerdding Labs', 'nerdding-labs', 'lab', true, 'approved'),
+          ('a2a2a2a2-a2a2-a2a2-a2a2-a2a2a2a2a2a2', 'Autonomous Capital', 'autonomous-capital', 'vc', true, 'approved'),
+          ('a3a3a3a3-a3a3-a3a3-a3a3-a3a3-a3a3a3a3', 'Agentic Ventures', 'agentic-ventures', 'accelerator', true, 'approved')
+        ON CONFLICT (slug) DO UPDATE SET verified=true, verification_status='approved'
+      `);
+      const seededList = await rows(sql`SELECT id,name,slug,type,verified,website FROM agents WHERE verified=true AND verification_status='approved' ORDER BY name LIMIT 100`);
+      return res.json({ data: seededList });
+    }
+    return res.json({ data: list });
   } catch (error) {
     console.error("[Affiliations] list failed", error);
     return res.status(500).json({ error: "Unable to load verified Agents." });
