@@ -9,6 +9,7 @@ export const agents = pgTable("agents", {
 });
 
 export const projects = pgTable("projects", {
+  // existing fields...
   id: uuid("id").defaultRandom().primaryKey(), ownerId: uuid("owner_id").references(() => users.id).notNull(), agentId: uuid("agent_id").references(() => agents.id), name: varchar("name", { length: 180 }).notNull(), slug: varchar("slug", { length: 100 }).notNull().unique(), description: text("description").notNull(), stage: varchar("stage", { length: 40 }).notNull(), githubUrl: text("github_url"), createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -37,6 +38,62 @@ export const messages = pgTable("messages", { id: uuid("id").defaultRandom().pri
 export const messageRequests = pgTable("message_requests", { id: uuid("id").defaultRandom().primaryKey(), senderId: uuid("sender_id").references(() => users.id, { onDelete: "cascade" }).notNull(), recipientId: uuid("recipient_id").references(() => users.id, { onDelete: "cascade" }).notNull(), status: varchar("status", { length: 20 }).notNull().default("pending"), createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull() });
 export const notifications = pgTable("notifications", { id: uuid("id").defaultRandom().primaryKey(), recipientId: uuid("recipient_id").references(() => users.id, { onDelete: "cascade" }).notNull(), actorId: uuid("actor_id").references(() => users.id), kind: varchar("kind", { length: 40 }).notNull(), entityId: text("entity_id"), text: text("text").notNull(), readAt: timestamp("read_at", { withTimezone: true }), createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull() });
 export const userSettings = pgTable("user_settings", { userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }).primaryKey(), discoverable: boolean("discoverable").notNull().default(true), emailNotifications: boolean("email_notifications").notNull().default(true), pushNotifications: boolean("push_notifications").notNull().default(true), allowMessages: boolean("allow_messages").notNull().default(true), updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull() });
-export const events = pgTable("events", { id: uuid("id").defaultRandom().primaryKey(), creatorId: uuid("creator_id").references(() => users.id, { onDelete: "cascade" }).notNull(), title: varchar("title", { length: 180 }).notNull(), description: text("description").notNull(), eventType: varchar("event_type", { length: 40 }).notNull().default("Community"), startsAt: timestamp("starts_at", { withTimezone: true }).notNull(), location: varchar("location", { length: 180 }).notNull(), url: text("url"), createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull() });
+export const events = pgTable("events", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  creatorId: uuid("creator_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+  title: varchar("title", { length: 180 }).notNull(),
+  description: text("description").notNull(),
+  eventType: varchar("event_type", { length: 40 }).notNull().default("Community"),
+  startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+  // new optional fields
+  category: varchar("category", { length: 100 }).default(null),
+  imageUrl: varchar("image_url", { length: 500 }).default(null),
+  organizerName: varchar("organizer_name", { length: 255 }).notNull(),
+  registrationLink: varchar("registration_link", { length: 500 }).default(null),
+  projectLink: varchar("project_link", { length: 500 }).default(null),
+  interests: integer("interests").notNull().default(0),
+  location: varchar("location", { length: 180 }).notNull(),
+  url: text("url"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+});
 export const eventRsvps = pgTable("event_rsvps", { eventId: uuid("event_id").references(() => events.id, { onDelete: "cascade" }).notNull(), userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(), status: varchar("status", { length: 20 }).notNull().default("interested"), createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull() }, (table) => ({ pk: primaryKey({ columns: [table.eventId, table.userId] }) }));
-export const fundraisings = pgTable("fundraisings", { id: uuid("id").defaultRandom().primaryKey(), agentId: uuid("agent_id").references(() => agents.id).notNull(), startupName: varchar("startup_name", { length: 180 }).notNull(), stage: varchar("stage", { length: 40 }).notNull(), industry: varchar("industry", { length: 80 }).notNull(), targetAmount: numeric("target_amount", { precision: 14, scale: 2 }).notNull(), raisedAmount: numeric("raised_amount", { precision: 14, scale: 2 }).notNull().default("0"), currency: varchar("currency", { length: 4 }).notNull().default("INR"), investorCount: integer("investor_count").notNull().default(0), visibility: varchar("visibility", { length: 20 }).notNull().default("public"), createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull() });
+export const fundraisings = pgTable("fundraisings", {
+  // existing fields...
+});
+
+// Table to track user interests in projects
+export const project_interests = pgTable("project_interests", {
+  userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+  projectId: uuid("project_id").references(() => projects.id, { onDelete: "cascade" }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({ pk: primaryKey({ columns: [table.userId, table.projectId] }) }));
+  id: uuid("id").defaultRandom().primaryKey(),
+  agentId: uuid("agent_id").references(() => agents.id).notNull(),
+  startupName: varchar("startup_name", { length: 180 }).notNull(),
+  stage: varchar("stage", { length: 40 }).notNull(),
+  industry: varchar("industry", { length: 80 }).notNull(),
+  // new optional fields for richer fundraising posts
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description").notNull(),
+  category: varchar("category", { length: 100 }).default(null),
+  imageUrl: varchar("image_url", { length: 500 }).default(null),
+  organizerName: varchar("organizer_name", { length: 255 }).notNull(),
+  beneficiaryName: varchar("beneficiary_name", { length: 255 }).default(null),
+  location: varchar("location", { length: 255 }).default(null),
+  deadline: date("deadline").default(null),
+  projectLink: varchar("project_link", { length: 500 }).default(null),
+  paymentLink: varchar("payment_link", { length: 500 }).default(null),
+  targetAmount: numeric("target_amount", { precision: 14, scale: 2 }).notNull(),
+  raisedAmount: numeric("raised_amount", { precision: 14, scale: 2 }).notNull().default("0"),
+  currency: varchar("currency", { length: 4 }).notNull().default("INR"),
+  investorCount: integer("investor_count").notNull().default(0),
+  visibility: varchar("visibility", { length: 20 }).notNull().default("public"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+});
+
+// Table to track user interests in projects
+export const project_interests = pgTable("project_interests", {
+  userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+  projectId: uuid("project_id").references(() => projects.id, { onDelete: "cascade" }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+}, (table) => ({ pk: primaryKey({ columns: [table.userId, table.projectId] }) }));

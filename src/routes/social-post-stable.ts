@@ -34,6 +34,24 @@ socialPostStableRouter.post("/posts",requireAuth,async(req,res)=>{
       if(hashtag) await db.execute(sql`INSERT INTO post_hashtags(post_id,hashtag_id) VALUES (${id},${hashtag.id}) ON CONFLICT DO NOTHING`);
     }
     if(parsed.data.media.length){for(const [index,media] of parsed.data.media.entries())await db.execute(sql`INSERT INTO post_media(post_id,storage_path,public_url,mime_type,sort_order) VALUES (${id},${media.path},${media.publicUrl??null},${media.mimeType},${index})`);}
+    
+    // Parse @mentions from the post body and send notifications
+    const mentionRegex = /@([a-zA-Z0-9_]+)/g;
+    const bodyText = typeof req.body.body === 'string' ? req.body.body : '';
+    const mentionMatches = [...bodyText.matchAll(mentionRegex)].map(m => m[1]);
+    if (mentionMatches.length > 0 && db) {
+      const uniqueUsernames = [...new Set(mentionMatches.map(u => u.toLowerCase()))];
+      try {
+        for (const username of uniqueUsernames) {
+          const mentionedRows = await db.execute(sql`SELECT id FROM users WHERE lower(username) = ${username} LIMIT 1`);
+          const mentioned = (Array.isArray(mentionedRows) ? mentionedRows : (mentionedRows as any).rows ?? [])[0];
+          if (mentioned && String(mentioned.id) !== String(req.auth!.subjectId)) {
+            await db.execute(sql`INSERT INTO notifications(recipient_id,actor_id,kind,entity_id,text) VALUES (${mentioned.id},${req.auth!.subjectId},'mention',${id},'mentioned you in a post.') ON CONFLICT DO NOTHING`);
+          }
+        }
+      } catch (e) { console.error('[Mentions] notification failed', e); }
+    }
+
     return res.status(201).json({data:{id:created.id,body:created.body,projectId:created.project_id,agentId:created.agent_id,projectSlug:parsed.data.projectSlug??null,agentSlug:parsed.data.agentSlug??null,linkUrl:created.link_url,quotePostId:created.quote_post_id??null,hashtags,media:parsed.data.media}});
   }catch(error){console.error("[SocialPostStable] Failed:",error);return res.status(500).json({error:"Unable to publish this post right now."});}
 });

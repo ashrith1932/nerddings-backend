@@ -21,3 +21,13 @@ notificationsRouter.post("/:notificationId/read", requireAuth, async (req, res) 
   if (db) await db.update(notifications).set({ readAt: new Date() }).where(eq(notifications.id, String(req.params.notificationId)));
   return res.status(204).send();
 });
+
+notificationsRouter.delete("/:notificationId", requireAuth, async (req, res) => {
+  if (db) await db.delete(notifications).where(eq(notifications.id, String(req.params.notificationId)));
+  return res.status(204).send();
+});
+
+notificationsRouter.delete("/", requireAuth, async (req, res) => {
+  if (db) await db.delete(notifications).where(eq(notifications.recipientId, req.auth!.subjectId));
+  return res.status(204).send();
+});

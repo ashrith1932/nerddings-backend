@@ -51,7 +51,8 @@ agentAffiliationsRouter.post("/affiliations/requests", requireAuth, async (req, 
   const existing = (await rows(sql`SELECT id,status FROM agent_affiliation_requests WHERE agent_id=${agent.id} AND user_id=${req.auth!.subjectId} LIMIT 1`))[0];
   if (existing?.status === "accepted") return res.status(409).json({ error: "You are already affiliated with this Agent." });
   await db.execute(sql`INSERT INTO agent_affiliation_requests(agent_id,user_id,role,status) VALUES (${agent.id},${req.auth!.subjectId},${parsed.data.role},'pending') ON CONFLICT(agent_id,user_id) DO UPDATE SET role=EXCLUDED.role,status='pending',updated_at=now()`);
-  await db.execute(sql`INSERT INTO notifications(recipient_id,actor_id,kind,entity_id,text) VALUES (${agent.id},${req.auth!.subjectId},'agent_affiliation_request',${agent.id},${`Requested affiliation with ${agent.name} as ${parsed.data.role}.`})`);
+  const reqRow = (await rows(sql`SELECT id FROM agent_affiliation_requests WHERE agent_id=${agent.id} AND user_id=${req.auth!.subjectId} LIMIT 1`))[0];
+  if (reqRow) await db.execute(sql`INSERT INTO notifications(recipient_id,actor_id,kind,entity_id,text) VALUES (${agent.id},${req.auth!.subjectId},'agent_affiliation_request',${reqRow.id},${`Requested affiliation with ${agent.name} as ${parsed.data.role}.`}) ON CONFLICT DO NOTHING`);
   return res.status(201).json({ data: { ok: true } });
 });
 

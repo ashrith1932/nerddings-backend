@@ -42,8 +42,43 @@ discoveryRouter.get("/charts", async (_req, res) => {
     `);
     const topProjects=projectRows.map(project=>({id:project.id,name:project.name,slug:project.slug,stage:project.stage,description:project.description,score:Math.round((Math.log1p(Number(project.likes_7d)+Number(project.comments_7d)*2+Number(project.reposts_7d)*2.5)*0.6+Number(project.posts_7d)*0.4)*100)/100}));
 
-    const startups=await rows(sql`SELECT id,startup_name,stage,industry,target_amount,raised_amount,currency,investor_count,created_at FROM fundraisings ORDER BY created_at DESC LIMIT 50`);
-    const trendingStartups=startups.map(item=>{const target=Number(item.target_amount)||1;const raised=Number(item.raised_amount)||0;return {...item,startupName:item.startup_name,targetAmount:target,raisedAmount:raised,progress:Math.min(100,Math.round(raised/target*100)),score:Math.round((Math.min(1,raised/target)*0.55+Math.min(1,Number(item.investor_count)/100)*0.25+(Date.now()-new Date(item.created_at).getTime()<7*864e5?0.2:0))*100)/100};}).sort((a,b)=>b.score-a.score).slice(0,20);
+    const agentStartupRows = await rows(sql`
+      SELECT
+        u.id, u.name, u.username, u.avatar_url,
+        a.type, a.slug agent_slug, a.verified,
+        COALESCE((SELECT COUNT(*) FROM posts p WHERE p.author_id=u.id AND p.created_at>NOW()-INTERVAL '30 days'),0)::int posts_30d,
+        COALESCE((SELECT COUNT(*) FROM post_likes l JOIN posts p ON p.id=l.post_id WHERE p.author_id=u.id AND l.created_at>NOW()-INTERVAL '7 days'),0)::int likes_7d,
+        COALESCE((SELECT COUNT(*) FROM post_comments c JOIN posts p ON p.id=c.post_id WHERE p.author_id=u.id AND c.created_at>NOW()-INTERVAL '7 days'),0)::int comments_7d,
+        COALESCE((SELECT COUNT(*) FROM follows f WHERE f.following_id=u.id),0)::int followers
+      FROM agents a
+      JOIN users u ON u.id=a.id
+      WHERE a.verified=true AND a.verification_status='approved'
+        AND (a.type='startup' OR a.type='company' OR a.type='lab')
+      ORDER BY a.verified DESC, u.trust_score DESC
+      LIMIT 50
+    `);
+
+    let trendingStartups: any[];
+    if (agentStartupRows.length === 0) {
+      const startups=await rows(sql`SELECT id,startup_name,stage,industry,target_amount,raised_amount,currency,investor_count,created_at FROM fundraisings ORDER BY created_at DESC LIMIT 50`);
+      trendingStartups=startups.map(item=>{const target=Number(item.target_amount)||1;const raised=Number(item.raised_amount)||0;return {...item,startupName:item.startup_name,targetAmount:target,raisedAmount:raised,progress:Math.min(100,Math.round(raised/target*100)),score:Math.round((Math.min(1,raised/target)*0.55+Math.min(1,Number(item.investor_count)/100)*0.25+(Date.now()-new Date(item.created_at).getTime()<7*864e5?0.2:0))*100)/100};}).sort((a:any,b:any)=>b.score-a.score).slice(0,20);
+    } else {
+      trendingStartups = agentStartupRows.map((row: any) => {
+        const engagement = Math.min(1, Math.log1p(Number(row.likes_7d) + Number(row.comments_7d) * 2) / 6);
+        const activity = Math.min(1, Number(row.posts_30d) / 15);
+        const followers = Math.min(1, Math.log1p(Number(row.followers)) / 10);
+        const score = Math.round((engagement * 0.5 + activity * 0.3 + followers * 0.2) * 100) / 100;
+        return {
+          id: row.id,
+          name: row.name,
+          username: row.username,
+          avatarUrl: row.avatar_url,
+          agentSlug: row.agent_slug,
+          type: row.type,
+          score,
+        };
+      }).sort((a: any, b: any) => b.score - a.score).slice(0, 20);
+    }
     return res.json({data:{risingBuilders,topProjects,trendingStartups,activeCommunities:[]},algorithm:"realtime-proof-engagement-v2",generatedAt:new Date().toISOString()});
   } catch (error) { console.error("[Discovery] Charts failed:",error); return res.status(500).json({error:"Charts are temporarily unavailable."}); }
 });
