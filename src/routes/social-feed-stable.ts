@@ -27,10 +27,37 @@ function score(row: Row, tagVelocity: Map<string, number>) {
   return freshness * 0.16 + engagementVelocity * 0.24 + quality * 0.16 + networkBoost + clamp(tagAffinity / 5) * 0.20 + topicVelocity * 0.12 + clamp(Number(row.meaningful_engagement_score) / 2) * 0.08 - spamPenalty * 0.18;
 }
 
-async function loadPosts(viewerId?: string, mode: "for-you" | "network" = "for-you"): Promise<Row[]> {
+async function loadPosts(viewerId?: string, mode: "for-you" | "network" | "saved" = "for-you"): Promise<Row[]> {
   if (!db) return [];
   const viewer = viewerId ? sql`LEFT JOIN follows vf ON vf.follower_id=${viewerId} AND vf.following_id=p.author_id` : sql`LEFT JOIN follows vf ON FALSE`;
-  const result = await db.execute(sql`
+  
+  const baseQuery = mode === "saved" && viewerId ? sql`
+    SELECT p.id,p.author_id,p.body,p.link_url,p.created_at,p.project_id,p.quote_post_id,
+      p.proof_of_work_score,p.meaningful_engagement_score,p.spam_penalty,
+      u.name,u.username,u.avatar_url,u.account_type,u.bio,u.location,u.trust_score,
+      pr.name project_name,pr.slug project_slug,pr.stage project_stage,pr.description project_description,pr.github_url,
+      COUNT(DISTINCT pl.user_id)::int likes,
+      COUNT(DISTINCT pc.id)::int comments,
+      COUNT(DISTINCT rr.user_id)::int reposts,
+      COUNT(DISTINCT ps.user_id)::int saves,
+      COALESCE((SELECT COUNT(*)::int FROM post_views pv WHERE pv.post_id=p.id),0) views,
+      COALESCE(BOOL_OR(vf.follower_id IS NOT NULL),false) is_following,
+      EXISTS(SELECT 1 FROM post_likes vl WHERE vl.post_id=p.id AND vl.user_id=${viewerId ?? null}) viewer_liked,
+      true AS viewer_saved,
+      EXISTS(SELECT 1 FROM post_reposts vr WHERE vr.post_id=p.id AND vr.user_id=${viewerId ?? null}) viewer_reposted,
+      COALESCE((SELECT json_agg(json_build_object('publicUrl',pm.public_url,'mimeType',pm.mime_type) ORDER BY pm.sort_order) FROM post_media pm WHERE pm.post_id=p.id),'[]'::json) media,
+      COALESCE((SELECT json_agg(h.tag ORDER BY h.tag) FROM post_hashtags ph JOIN hashtags h ON h.id=ph.hashtag_id WHERE ph.post_id=p.id),'[]'::json) hashtags,
+      (SELECT json_build_object('id',qp.id,'text',qp.body,'createdAt',qp.created_at,'linkUrl',qp.link_url,'author',json_build_object('id',qu.id,'name',qu.name,'username',qu.username,'avatarUrl',qu.avatar_url,'accountType',qu.account_type),'project',CASE WHEN qpr.id IS NULL THEN NULL ELSE json_build_object('id',qpr.id,'name',qpr.name,'slug',qpr.slug,'stage',qpr.stage,'description',qpr.description,'githubUrl',qpr.github_url) END,'media',COALESCE((SELECT json_agg(json_build_object('publicUrl',qpm.public_url,'mimeType',qpm.mime_type) ORDER BY qpm.sort_order) FROM post_media qpm WHERE qpm.post_id=qp.id),'[]'::json),'likes',(SELECT COUNT(*)::int FROM post_likes ql WHERE ql.post_id=qp.id),'comments',(SELECT COUNT(*)::int FROM post_comments qc WHERE qc.post_id=qp.id),'reposts',(SELECT COUNT(*)::int FROM post_reposts qr WHERE qr.post_id=qp.id),'saves',(SELECT COUNT(*)::int FROM post_saves qs WHERE qs.post_id=qp.id),'views',(SELECT COUNT(*)::int FROM post_views qv WHERE qv.post_id=qp.id)) FROM posts qp JOIN users qu ON qu.id=qp.author_id LEFT JOIN projects qpr ON qpr.id=qp.project_id WHERE qp.id=p.quote_post_id) quote_post
+    FROM post_saves target
+    JOIN posts p ON p.id = target.post_id
+    JOIN users u ON u.id=p.author_id
+    LEFT JOIN projects pr ON pr.id=p.project_id
+    LEFT JOIN post_likes pl ON pl.post_id=p.id LEFT JOIN post_comments pc ON pc.post_id=p.id
+    LEFT JOIN post_reposts rr ON rr.post_id=p.id LEFT JOIN post_saves ps ON ps.post_id=p.id
+    ${viewer}
+    WHERE target.user_id = ${viewerId}
+    GROUP BY p.id,u.id,pr.id,target.created_at ORDER BY target.created_at DESC LIMIT 50
+  ` : sql`
     SELECT p.id,p.author_id,p.body,p.link_url,p.created_at,p.project_id,p.quote_post_id,
       p.proof_of_work_score,p.meaningful_engagement_score,p.spam_penalty,
       u.name,u.username,u.avatar_url,u.account_type,u.bio,u.location,u.trust_score,
@@ -66,9 +93,11 @@ async function loadPosts(viewerId?: string, mode: "for-you" | "network" = "for-y
     LEFT JOIN post_reposts rr ON rr.post_id=p.id LEFT JOIN post_saves ps ON ps.post_id=p.id
     ${viewer}
     GROUP BY p.id,u.id,pr.id ORDER BY p.created_at DESC LIMIT 180
-  `);
+  `;
+  const result = await db.execute(baseQuery);
   let resultRows = rows(result);
   if (mode === "network" && viewerId) resultRows = resultRows.filter(row => row.author_id === viewerId || row.is_following);
+  if (mode === "saved") return resultRows.map(row => ({ ...row, mode, tag_affinity: 0, score: 0 }));
 
   let affinity = new Map<string, number>();
   if (viewerId) {
@@ -102,7 +131,7 @@ async function loadPosts(viewerId?: string, mode: "for-you" | "network" = "for-y
     .slice(0, 50);
 }
 
-function serialize(row: Row) {
+export function serialize(row: Row) {
   return {
     id: row.id, authorId: row.author_id,
     author: { id: row.author_id, name: row.name, username: row.username, avatarUrl: row.avatar_url, accountType: row.account_type, bio: row.bio, location: row.location },
@@ -119,7 +148,7 @@ function serialize(row: Row) {
 
 socialFeedStableRouter.get("/feed", async (req,res) => {
   try {
-    const mode = req.query.mode === "network" ? "network" : "for-you";
+    const mode = req.query.mode === "network" ? "network" : req.query.mode === "saved" ? "saved" : "for-you";
     const result = await loadPosts(req.auth?.subjectId, mode);
     return res.json({ data: result.map(serialize), algorithm: "nerddings-relevance-v5", mode });
   } catch (error) {
@@ -130,7 +159,7 @@ socialFeedStableRouter.get("/feed", async (req,res) => {
 
 socialFeedStableRouter.get("/feed/recommendation-update", async (req,res) => {
   try {
-    const mode = req.query.mode === "network" ? "network" : "for-you";
+    const mode = req.query.mode === "network" ? "network" : req.query.mode === "saved" ? "saved" : "for-you";
     const currentIds = new Set(String(req.query.ids ?? "").split(",").map(value => value.trim()).filter(Boolean));
     const result = await loadPosts(req.auth?.subjectId, mode);
     const incoming = result.filter(row => !currentIds.has(String(row.id))).length;
