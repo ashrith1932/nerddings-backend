@@ -11,6 +11,7 @@ import {
   notifications,
   userSettings,
   users,
+  follows as followsTable,
 } from "../db/schema.js";
 import { and, desc, eq, ilike, or } from "drizzle-orm";
 
@@ -186,7 +187,29 @@ async function acceptedRequest(
     )
     .limit(1);
 
-  return Boolean(request);
+  if (request) {
+    return true;
+  }
+
+  // Check for mutual follows
+  const follows = await db
+    .select()
+    .from(followsTable)
+    .where(
+      or(
+        and(
+          eq(followsTable.followerId, userA),
+          eq(followsTable.followingId, userB)
+        ),
+        and(
+          eq(followsTable.followerId, userB),
+          eq(followsTable.followingId, userA)
+        )
+      )
+    )
+    .limit(2);
+
+  return follows.length === 2;
 }
 
 async function createConversation(
@@ -613,9 +636,20 @@ messagesRouter.post(
           parsed.data.recipientId,
         )
       ) {
+        const conversationId =
+          (await findConversation(
+            req.auth!.subjectId,
+            parsed.data.recipientId,
+          )) ??
+          (await createConversation(
+            req.auth!.subjectId,
+            parsed.data.recipientId,
+          ));
+
         return res.json({
           data: {
             status: "accepted",
+            conversationId,
           },
         });
       }

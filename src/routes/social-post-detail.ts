@@ -25,7 +25,7 @@ function serializePost(row: Row, media: Row[], commentsTree: Row[], quotePost: R
   return {
     id: row.id,
     authorId: row.author_id,
-    author: { id: row.author_id, name: row.name, username: row.username, avatarUrl: row.avatar_url, accountType: row.account_type, bio: row.bio, location: row.location },
+    author: { id: row.author_id, name: row.name, username: row.username, avatarUrl: row.avatar_url, accountType: row.account_type, bio: row.bio, location: row.location, verified: Boolean(row.verified) },
     text: row.body,
     createdAt: row.created_at,
     score: Number(row.proof_of_work_score ?? 0),
@@ -51,7 +51,7 @@ async function loadQuotedPost(postId: string | null | undefined) {
   if (!postId) return null;
   const rows = await executeRows(sql`
     SELECT p.id,p.author_id,p.body,p.link_url,p.proof_of_work_score,p.created_at,p.project_id,
-           u.name,u.username,u.avatar_url,u.account_type,
+           u.name,u.username,u.avatar_url,u.account_type,u.verified,
            pr.name project_name,pr.slug project_slug,pr.stage project_stage,pr.description project_description,pr.github_url,
            (SELECT COUNT(*)::int FROM post_likes x WHERE x.post_id=p.id) likes,
            (SELECT COUNT(*)::int FROM post_comments x WHERE x.post_id=p.id) comments,
@@ -70,7 +70,7 @@ async function loadQuotedPost(postId: string | null | undefined) {
   const media = await serializeMedia(mediaRows);
   return {
     id: row.id,
-    author: { id: row.author_id, name: row.name, username: row.username, avatarUrl: row.avatar_url, accountType: row.account_type },
+    author: { id: row.author_id, name: row.name, username: row.username, avatarUrl: row.avatar_url, accountType: row.account_type, verified: Boolean(row.verified) },
     text: row.body,
     createdAt: row.created_at,
     linkUrl: row.link_url ?? null,
@@ -86,7 +86,7 @@ async function loadQuotedPost(postId: string | null | undefined) {
 
 async function loadComments(postId: string) {
   const rows = await executeRows(sql`
-    SELECT c.id,c.post_id,c.parent_id,c.body,c.created_at,u.id AS author_id,u.name,u.username,u.avatar_url
+    SELECT c.id,c.post_id,c.parent_id,c.body,c.created_at,u.id AS author_id,u.name,u.username,u.avatar_url,u.account_type,u.verified
     FROM post_comments c
     JOIN users u ON u.id=c.author_id
     WHERE c.post_id=${postId}
@@ -94,7 +94,7 @@ async function loadComments(postId: string) {
   `);
   const byParent = new Map<string | null, any[]>();
   for (const row of rows) {
-    const item = { id: String(row.id), postId: String(row.post_id), parentId: row.parent_id == null ? null : String(row.parent_id), body: String(row.body), createdAt: String(row.created_at), author: { id: row.author_id, name: row.name, username: row.username, avatarUrl: row.avatar_url }, replies: [] as any[] };
+    const item = { id: String(row.id), postId: String(row.post_id), parentId: row.parent_id == null ? null : String(row.parent_id), body: String(row.body), createdAt: String(row.created_at), author: { id: row.author_id, name: row.name, username: row.username, avatarUrl: row.avatar_url, accountType: row.account_type, verified: Boolean(row.verified) }, replies: [] as any[] };
     const key = item.parentId;
     const list = byParent.get(key) ?? [];
     list.push(item);
@@ -109,7 +109,7 @@ socialPostDetailRouter.get("/posts/:postId", async (req, res) => {
   try {
     const postRows = await executeRows(sql`
       SELECT p.id,p.author_id,p.body,p.link_url,p.proof_of_work_score,p.created_at,p.project_id,p.quote_post_id,
-             u.name,u.username,u.avatar_url,u.account_type,u.bio,u.location,
+             u.name,u.username,u.avatar_url,u.account_type,u.bio,u.location,u.verified,
              pr.name project_name,pr.slug project_slug,pr.stage project_stage,pr.description project_description,pr.github_url,
              (SELECT COUNT(*)::int FROM post_likes x WHERE x.post_id=p.id) likes,
              (SELECT COUNT(*)::int FROM post_comments x WHERE x.post_id=p.id) comments,

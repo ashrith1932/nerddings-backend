@@ -34,7 +34,7 @@ async function loadPosts(viewerId?: string, mode: "for-you" | "network" | "saved
   const baseQuery = mode === "saved" && viewerId ? sql`
     SELECT p.id,p.author_id,p.body,p.link_url,p.created_at,p.project_id,p.quote_post_id,
       p.proof_of_work_score,p.meaningful_engagement_score,p.spam_penalty,
-      u.name,u.username,u.avatar_url,u.account_type,u.bio,u.location,u.trust_score,
+      u.name,u.username,u.avatar_url,u.account_type,u.bio,u.location,u.trust_score,u.verified,
       pr.name project_name,pr.slug project_slug,pr.stage project_stage,pr.description project_description,pr.github_url,
       COUNT(DISTINCT pl.user_id)::int likes,
       COUNT(DISTINCT pc.id)::int comments,
@@ -47,7 +47,7 @@ async function loadPosts(viewerId?: string, mode: "for-you" | "network" | "saved
       EXISTS(SELECT 1 FROM post_reposts vr WHERE vr.post_id=p.id AND vr.user_id=${viewerId ?? null}) viewer_reposted,
       COALESCE((SELECT json_agg(json_build_object('publicUrl',pm.public_url,'mimeType',pm.mime_type) ORDER BY pm.sort_order) FROM post_media pm WHERE pm.post_id=p.id),'[]'::json) media,
       COALESCE((SELECT json_agg(h.tag ORDER BY h.tag) FROM post_hashtags ph JOIN hashtags h ON h.id=ph.hashtag_id WHERE ph.post_id=p.id),'[]'::json) hashtags,
-      (SELECT json_build_object('id',qp.id,'text',qp.body,'createdAt',qp.created_at,'linkUrl',qp.link_url,'author',json_build_object('id',qu.id,'name',qu.name,'username',qu.username,'avatarUrl',qu.avatar_url,'accountType',qu.account_type),'project',CASE WHEN qpr.id IS NULL THEN NULL ELSE json_build_object('id',qpr.id,'name',qpr.name,'slug',qpr.slug,'stage',qpr.stage,'description',qpr.description,'githubUrl',qpr.github_url) END,'media',COALESCE((SELECT json_agg(json_build_object('publicUrl',qpm.public_url,'mimeType',qpm.mime_type) ORDER BY qpm.sort_order) FROM post_media qpm WHERE qpm.post_id=qp.id),'[]'::json),'likes',(SELECT COUNT(*)::int FROM post_likes ql WHERE ql.post_id=qp.id),'comments',(SELECT COUNT(*)::int FROM post_comments qc WHERE qc.post_id=qp.id),'reposts',(SELECT COUNT(*)::int FROM post_reposts qr WHERE qr.post_id=qp.id),'saves',(SELECT COUNT(*)::int FROM post_saves qs WHERE qs.post_id=qp.id),'views',(SELECT COUNT(*)::int FROM post_views qv WHERE qv.post_id=qp.id)) FROM posts qp JOIN users qu ON qu.id=qp.author_id LEFT JOIN projects qpr ON qpr.id=qp.project_id WHERE qp.id=p.quote_post_id) quote_post
+      (SELECT json_build_object('id',qp.id,'text',qp.body,'createdAt',qp.created_at,'linkUrl',qp.link_url,'author',json_build_object('id',qu.id,'name',qu.name,'username',qu.username,'avatarUrl',qu.avatar_url,'accountType',qu.account_type,'verified',qu.verified),'project',CASE WHEN qpr.id IS NULL THEN NULL ELSE json_build_object('id',qpr.id,'name',qpr.name,'slug',qpr.slug,'stage',qpr.stage,'description',qpr.description,'githubUrl',qpr.github_url) END,'media',COALESCE((SELECT json_agg(json_build_object('publicUrl',qpm.public_url,'mimeType',qpm.mime_type) ORDER BY qpm.sort_order) FROM post_media qpm WHERE qpm.post_id=qp.id),'[]'::json),'likes',(SELECT COUNT(*)::int FROM post_likes ql WHERE ql.post_id=qp.id),'comments',(SELECT COUNT(*)::int FROM post_comments qc WHERE qc.post_id=qp.id),'reposts',(SELECT COUNT(*)::int FROM post_reposts qr WHERE qr.post_id=qp.id),'saves',(SELECT COUNT(*)::int FROM post_saves qs WHERE qs.post_id=qp.id),'views',(SELECT COUNT(*)::int FROM post_views qv WHERE qv.post_id=qp.id)) FROM posts qp JOIN users qu ON qu.id=qp.author_id LEFT JOIN projects qpr ON qpr.id=qp.project_id WHERE qp.id=p.quote_post_id) quote_post
     FROM post_saves target
     JOIN posts p ON p.id = target.post_id
     JOIN users u ON u.id=p.author_id
@@ -78,7 +78,7 @@ async function loadPosts(viewerId?: string, mode: "for-you" | "network" | "saved
         'text',qp.body,
         'createdAt',qp.created_at,
         'linkUrl',qp.link_url,
-        'author',json_build_object('id',qu.id,'name',qu.name,'username',qu.username,'avatarUrl',qu.avatar_url,'accountType',qu.account_type),
+        'author',json_build_object('id',qu.id,'name',qu.name,'username',qu.username,'avatarUrl',qu.avatar_url,'accountType',qu.account_type,'verified',qu.verified),
         'project',CASE WHEN qpr.id IS NULL THEN NULL ELSE json_build_object('id',qpr.id,'name',qpr.name,'slug',qpr.slug,'stage',qpr.stage,'description',qpr.description,'githubUrl',qpr.github_url) END,
         'media',COALESCE((SELECT json_agg(json_build_object('publicUrl',qpm.public_url,'mimeType',qpm.mime_type) ORDER BY qpm.sort_order) FROM post_media qpm WHERE qpm.post_id=qp.id),'[]'::json),
         'likes',(SELECT COUNT(*)::int FROM post_likes ql WHERE ql.post_id=qp.id),
@@ -134,7 +134,7 @@ async function loadPosts(viewerId?: string, mode: "for-you" | "network" | "saved
 export function serialize(row: Row) {
   return {
     id: row.id, authorId: row.author_id,
-    author: { id: row.author_id, name: row.name, username: row.username, avatarUrl: row.avatar_url, accountType: row.account_type, bio: row.bio, location: row.location },
+    author: { id: row.author_id, name: row.name, username: row.username, avatarUrl: row.avatar_url, accountType: row.account_type, bio: row.bio, location: row.location, verified: Boolean(row.verified) },
     text: row.body, createdAt: row.created_at,
     score: Math.round(Number(row.score ?? 0) * 1000) / 1000,
     likes: Number(row.likes ?? 0), comments: Number(row.comments ?? 0), reposts: Number(row.reposts ?? 0), saves: Number(row.saves ?? 0), views: Number(row.views ?? 0),
@@ -201,7 +201,7 @@ socialFeedStableRouter.get("/hashtags/:tag", async (req,res) => {
     if (!tag || !db) return res.json({ data: { tag, posts: [] } });
     const result = await db.execute(sql`
       SELECT p.id,p.author_id,p.body,p.link_url,p.created_at,p.project_id,p.quote_post_id,
-        u.name,u.username,u.avatar_url,u.account_type,u.bio,u.location,u.trust_score,
+        u.name,u.username,u.avatar_url,u.account_type,u.bio,u.location,u.trust_score,u.verified,
         pr.name project_name,pr.slug project_slug,pr.stage project_stage,pr.description project_description,pr.github_url,
         (SELECT COUNT(*)::int FROM post_likes x WHERE x.post_id=p.id) likes,
         (SELECT COUNT(*)::int FROM post_comments x WHERE x.post_id=p.id) comments,
